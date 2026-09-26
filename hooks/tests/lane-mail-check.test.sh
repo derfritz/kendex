@@ -1169,6 +1169,8 @@ OFF_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=5000
 HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
 RATE_MARK_LINE="oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=eclaude"
 QUALIFYING_MARK_LINE="oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on"
+ROOT_RSS_MARK_LINE="oversee-succeed: mark-reached kind=root-rss value=1312 mark=1300 succession=on root-rss=1312 root-rss-mark=1300 slice-anon=1950 slice-anon-mark=2100"
+SLICE_ANON_MARK_LINE="oversee-succeed: mark-reached kind=slice-anon value=2150 mark=2100 succession=on root-rss=900 root-rss-mark=1300 slice-anon=2150 slice-anon-mark=2100"
 BELOW_MARK_LINE="oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
@@ -1285,7 +1287,9 @@ assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR
 
 for mark_row in \
   "rate|$RATE_MARK_LINE|30|ORCH_OVERSEER_WALL_MINUTES" \
-  "qualifying|$QUALIFYING_MARK_LINE|1|ORCH_OVERSEER_SUCCESSOR_ACCOUNTS"; do
+  "qualifying|$QUALIFYING_MARK_LINE|1|ORCH_OVERSEER_SUCCESSOR_ACCOUNTS" \
+  "root-rss|$ROOT_RSS_MARK_LINE|1312|ORCH_OVERSEER_ROOT_RSS_MIB" \
+  "slice-anon|$SLICE_ANON_MARK_LINE|2150|ORCH_OVERSEER_SLICE_ANON_MIB"; do
   IFS='|' read -r mark_kind mark_line mark_value mark_setting <<<"$mark_row"
   new_overseer "overseer_$mark_kind"
   judge_says "$mark_line"
@@ -1296,6 +1300,11 @@ for mark_row in \
   assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route)" \
     "setting=1 route=1" "and the refusal names the setting and succession route"
 done
+# The table's last row is a memory mark, whose refusal carries the judgement's
+# own line under it: the figure that fired names one metric, and the other
+# metric's figure is on that line alone.
+assert_eq "$(grep -cxF -- "$SLICE_ANON_MARK_LINE" "$ERR_FILE")" "1" \
+  "and a memory refusal carries the judgement's line, both memory figures on it"
 
 # What the marks cannot judge is reported and passed, never refused: an
 # overseer whose marks nothing could measure must still end a turn, exactly as

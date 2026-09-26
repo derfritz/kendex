@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# oversee-succeed — replace an overseer past its context mark, or on an
-# account near its wall, with a fresh overseer session in the same tmux window
-# position.
+# oversee-succeed — replace an overseer past its context mark, on an account
+# near its wall, or past an operator memory mark, with a fresh overseer session
+# in the same tmux window position.
 #
 # Usage:
 #   oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
@@ -82,6 +82,17 @@
 #        prints `mark-reached` and a reading that could not be taken prints
 #        `mark-unmeasured`, either of which ends the run there; a reached mark
 #        otherwise falls through to step 3.
+#        The MEMORY marks are operator settings with no package default, and
+#        a host whose operator set neither reads no memory at all:
+#        ORCH_OVERSEER_ROOT_RSS_MIB fires at or above the resident size of
+#        this overseer's own harness process, and ORCH_OVERSEER_SLICE_ANON_MIB
+#        above the anonymous memory of the systemd user slice it runs in
+#        (lib/overseer-memory.sh reads and judges both). Each is a trigger of
+#        its own, judged whatever the other triggers read, and a figure that
+#        could not be read never stops the other one firing. A memory mark
+#        keeps the caller's own account where its headroom was measured above
+#        the trigger, since the account is not what ran out. The recovery is
+#        a fresh session, never a compaction.
 #     3. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        entries: harness claude or codex, rank a position on the kendex tier
 #        ladder (1 is the top tier; `kendex tier-model` names its model),
@@ -134,7 +145,14 @@
 #        own fields say which account ran out and when its binding bucket
 #        frees up.
 #     4. Open a window named `overseer` right after the caller's and launch the
-#        harness there with a brief naming the handoff file. The command is
+#        harness there with a brief naming the handoff file. At a reached
+#        memory mark, both overseers run in the slice until step 5 closes the
+#        caller, so the launch first needs the slice's anonymous memory
+#        measured under a measured cap and its oom_kill count read, and
+#        refuses `memory-overlap-unsafe` naming the figure that failed; the
+#        mark it crossed is then appended to the handoff file as its cause
+#        line, and a slice OOM kill between the launch and the close refuses
+#        `successor-memory-unsafe` and closes the successor. The command is
 #        built by lib/lane-launch.sh, the builder open-terminal uses, so a
 #        machine whose harness command is an account shim is launched through
 #        that shim rather than under an environment prefix it overwrites. Then
@@ -225,14 +243,19 @@
 #                    pane and account, print the one keyed line that says what
 #                    they found, and stop there: no lane is picked, no window
 #                    is opened and nothing is launched. `mark-reached` carries
-#                    `kind` (context, headroom, rate or qualifying), the `value` it read, the
+#                    `kind` (context, headroom, rate, qualifying, root-rss or
+#                    slice-anon), the `value` it read, the
 #                    `mark` it crossed and `succession`, the effective
 #                    ORCH_OVERSEER_SUCCESSION. A reading that could not be
-#                    taken at all is `mark-unmeasured kind=<context|headroom|rate|qualifying>
+#                    taken at all is `mark-unmeasured
+#                    kind=<context|headroom|rate|qualifying|root-rss|slice-anon>
 #                    reason=<...>`,
 #                    which is not a mark that lifted: a caller holding a
 #                    standing mark keeps it. Below both marks, with both read,
 #                    the two below-mark lines above are printed instead.
+#                    Where a memory mark is set, a memory line and both
+#                    below-mark lines also carry every memory figure and mark
+#                    as lib/overseer-memory.sh names them.
 #                    Because it launches nothing, `off` does not gate it: an
 #                    overseer past its mark is told so whether or not a
 #                    successor may open. Exit 0 with the line on stdout. Takes
@@ -323,6 +346,10 @@ message() { # KEY FIELD=VALUE...
     invalid-wall-minutes) text='ORCH_OVERSEER_WALL_MINUTES takes a whole number of minutes; 0 disables this trigger.' ;;
     invalid-successor-accounts) text='ORCH_OVERSEER_SUCCESSOR_ACCOUNTS takes a whole number; 0 disables this trigger.' ;;
     invalid-context-mark) text='ORCH_HANDOFF_CONTEXT_TOKENS takes a whole number of tokens.' ;;
+    invalid-memory-mark) text='ORCH_OVERSEER_ROOT_RSS_MIB and ORCH_OVERSEER_SLICE_ANON_MIB each take a positive whole number of MiB, or nothing for no mark.' ;;
+    memory-overlap-unsafe) text='A memory mark is reached, and a successor started now would share the user slice with this overseer until the swap, but the slice figures did not establish room for both; nothing was launched and this overseer keeps running. The reason names the figure: anon-* and max-* a slice reading that failed, no-headroom anonymous memory at or past the cap, events-unreadable the oom_kill count in memory.events.' ;;
+    successor-memory-unsafe) text='The user slice recorded an OOM kill while the successor and this overseer both ran, or its memory.events could not be read again, so the replacement is not claimed: the successor was closed and this overseer keeps running.' ;;
+    handoff-unwritten) text='The memory mark could not be recorded in the handoff file as the cause of this succession; nothing was launched.' ;;
     pane-unreadable) text='The caller pane could not be read.' ;;
     no-status-line) text='The caller pane shows no harness status line to measure.' ;;
     window-below-mark) text='The overseer window is under 1M tokens; nothing was launched. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
@@ -396,6 +423,8 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT" 2>"$DEP_ERR" || die settings-rejected "path=$PROJECT_ROOT"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
+# shellcheck source=lib/overseer-memory.sh
+source "$SCRIPT_DIR/lib/overseer-memory.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/pane-write.sh
@@ -627,6 +656,7 @@ if (( JUDGES )); then
   matches "$SUCCESSOR_ACCOUNTS" '^[0-9]{1,9}$' || die invalid-successor-accounts "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS=$SUCCESSOR_ACCOUNTS"
   WALL_MINUTES=$((10#$WALL_MINUTES))
   SUCCESSOR_ACCOUNTS=$((10#$SUCCESSOR_ACCOUNTS))
+  overseer_memory_marks || die invalid-memory-mark "$MEMORY_MARK_BAD"
 fi
 # A pane of its own replaces the caller's, so only the modes reading the
 # caller's need $TMUX_PANE at all.
@@ -817,8 +847,19 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
   fi
 fi
 
-# Capacity is the only fleet-wide read. Headroom, rate and context are already
-# decided, so a slow sweep cannot hide a mark this pane already reached.
+# The memory marks, read whatever the triggers above decided: a succession the
+# memory also asked for has to hold the overlap check before its launch. The
+# pane's own process is where lib/overseer-memory.sh starts looking for the
+# harness, and a pid tmux could not name is a reading it reports unknown.
+if (( JUDGES )) && overseer_memory_on; then
+  caller_pid="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_pid}' 2>/dev/null)" || caller_pid=""
+  overseer_memory_read "$caller_pid" "$CALLER_HARNESS"
+  overseer_memory_judge
+  [[ -n "$MARK_KIND" || -z "$MEMORY_FIRED" ]] || MARK_KIND="$MEMORY_FIRED"
+fi
+
+# Capacity is the only fleet-wide read. Headroom, rate, context and memory are
+# already decided, so a slow sweep cannot hide a mark this pane already reached.
 if (( JUDGES )) && (( SUCCESSOR_ACCOUNTS > 0 )) && [[ -z "$MARK_KIND" && "$CALLER_STATE" != at-trigger ]]; then
   capacity_rc=0
   capacity_floor=()
@@ -875,14 +916,22 @@ if (( JUDGES )) && [[ -z "$MARK_KIND" ]]; then
           "succession=$SUCCESSION"
         exit 0
       fi
+      if [[ -n "$MEMORY_UNKNOWN" ]]; then
+        message mark-unmeasured "kind=$MEMORY_UNKNOWN" "reason=$MEMORY_UNKNOWN-$MEMORY_UNKNOWN_REASON" \
+          "succession=$SUCCESSION" "${MEMORY_FIELDS[@]}"
+        exit 0
+      fi
     fi
+    # Every memory figure rides on the below-mark lines where a memory mark is
+    # set, so an operator reads the marks this host loaded beside what they
+    # were judged against.
     if (( ! WINDOW_OK )); then
       message window-below-mark "window=${window:-none}" "source=${window_source:-none}" \
-        "headroom=$HEADROOM_FIELD"
+        "headroom=$HEADROOM_FIELD" ${MEMORY_FIELDS[@]+"${MEMORY_FIELDS[@]}"}
       exit 0
     fi
     message context-below-mark "tokens=$tokens" "mark=$CONTEXT_MARK" \
-      "headroom=$HEADROOM_FIELD"
+      "headroom=$HEADROOM_FIELD" ${MEMORY_FIELDS[@]+"${MEMORY_FIELDS[@]}"}
     exit 0
 fi
 
@@ -902,11 +951,21 @@ if [[ "$MODE" == check ]]; then
   elif [[ "$MARK_KIND" == qualifying ]]; then
     message mark-reached kind=qualifying "value=$QUALIFYING_COUNT" "mark=$SUCCESSOR_ACCOUNTS" \
       "succession=$SUCCESSION"
+  elif [[ "$MARK_KIND" == root-rss || "$MARK_KIND" == slice-anon ]]; then
+    message mark-reached "kind=$MEMORY_FIRED" "value=$MEMORY_FIRED_VALUE" "mark=$MEMORY_FIRED_MARK" \
+      "succession=$SUCCESSION" "${MEMORY_FIELDS[@]}"
   else
     message mark-reached kind=context "value=$tokens" "mark=$CONTEXT_MARK" \
       "succession=$SUCCESSION" "headroom=$HEADROOM_FIELD"
   fi
   exit 0
+fi
+
+# A reached memory mark is a slice short of room, and the successor adds to
+# it until the close. Judged before any lane is picked, on the figures the
+# judgement just read, so an overlap nothing measured launches nothing.
+if [[ "$MODE" == succeed && -n "$MEMORY_FIRED" ]] && ! overseer_memory_overlap_open; then
+  die memory-overlap-unsafe "reason=$MEMORY_OVERLAP_REASON" "${MEMORY_FIELDS[@]}"
 fi
 
 # The preference names where a LATER successor goes; `print` records what THIS
@@ -1252,6 +1311,17 @@ fi
 # being the one its caller handed in.
 [[ "$MODE" != walled ]] || printf '%s\n' "$cmd"
 
+# The memory mark's cause line, appended to the handoff file the successor is
+# briefed to read, from the directory its window opens in. Before the launch
+# line is recorded, so a cause that could not be written launches nothing.
+if [[ "$MODE" == succeed && -n "$MEMORY_FIRED" ]]; then
+  handoff_path="$HANDOFF"
+  [[ "$handoff_path" == /* ]] || handoff_path="$CALLER_PATH/$handoff_path"
+  printf '\nSuccession cause: oversee-succeed memory mark kind=%s value=%s mark=%s slice-headroom=%s %s\n' \
+    "$MEMORY_FIRED" "$MEMORY_FIRED_VALUE" "$MEMORY_FIRED_MARK" "$MEMORY_HEADROOM" "${MEMORY_FIELDS[*]}" \
+    2>"$DEP_ERR" >> "$handoff_path" || die handoff-unwritten "path=$handoff_path"
+fi
+
 # Recorded BEFORE the window opens, not after the close: the close kills this
 # script's own window and a write placed after it may never run. A launch that
 # then fails leaves the line of a successor that was chosen and had room, which
@@ -1426,6 +1496,14 @@ done
 # rather than about whatever came up first. Before the commit point, so a
 # disagreement still costs nothing but the successor.
 account_verdict "$(succ_budget_bound)" final
+
+# The overlap under the slice cap, read once both overseers have run: an OOM
+# kill in the slice since the launch means the room the launch was judged on
+# did not hold, and the replacement is not claimed.
+if [[ "$MODE" == succeed && -n "$MEMORY_FIRED" ]] && ! overseer_memory_overlap_held; then
+  abandon successor-memory-unsafe "reason=$MEMORY_OVERLAP_REASON" "window=$SUCC_WINDOW" \
+    "oom-kills-before=$MEMORY_OOM_BEFORE" "oom-kills=${MEMORY_OOM_KILLS:-unknown}"
+fi
 
 # Step 6 (header), arranged here, before the close, because nothing after it
 # can be counted on to run. The helper is started before the commit point
