@@ -439,6 +439,14 @@ observe() {
       creates) value="$(counted '^create ' "$RUN/worktree.log")" ;;
       claims) value="$([[ -d "$RUN/state/claims" ]] && ls -1 "$RUN/state/claims" | wc -l | tr -d '[:space:]' || echo nolog)" ;;
       cmd_lane) value="$(grep -oE "env CLAUDE_CONFIG_DIR='[^']*'" "$RUN/tmux.log" 2>/dev/null | sed -E -e "s/^env CLAUDE_CONFIG_DIR='//" -e "s/'\$//" -e "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
+      # The whole launch line the pane was handed, the fixture home replaced
+      # by H, spaces by commas, so a row pins the words a copilot launch
+      # carries and their order.
+      launch_line)
+        # The stub logs the pasted text on the line after its load-buffer call.
+        value="$(awk '/^load-buffer / { getline; print; exit }' "$RUN/tmux.log" 2>/dev/null | sed -e "s#$H#H#g" -e "s#$TMP_ROOT#T#g" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
       claim_lanes) value="$(cat "$RUN"/state/claims/*.claim 2>/dev/null | cut -f3 | sed "s#^$H/\\.##" | sort -u | paste -sd, - || true)"; value="${value:-none}" ;;
       claim_window) value="$(cat "$RUN"/state/claims/*.claim 2>/dev/null | cut -f4 || true)" ;;
       claim_pane) value="$(cat "$RUN"/state/claims/*.claim 2>/dev/null | cut -f2 || true)" ;;
@@ -627,6 +635,7 @@ table \
   "a launch naming neither is refused for both, one keyed line each||--harness claude --lane $H/.claude --cmd true CC-82|rc=1 launched=nolog creates=nolog modelmissing=harness=claude,lane=$H/.claude,spellings=--model effortmissing=harness=claude,lane=$H/.claude,spellings=--effort" \
   "a pi launch naming neither is refused the same way, on pi's own spellings||--harness pi --lane $H/.claude --cmd true CC-83|rc=1 launched=nolog creates=nolog modelmissing=harness=pi,lane=$H/.claude,spellings=--model effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking" \
   "a codex launch naming neither is refused on codex's config-token spelling of the effort||--harness codex --lane $H/.claude --cmd true CC-84|rc=1 launched=nolog creates=nolog modelmissing=harness=codex,lane=$H/.claude,spellings=-m,--model effortmissing=harness=codex,lane=$H/.claude,spellings=model_reasoning_effort=" \
+  "a copilot launch naming neither is refused on copilot's own spellings||--harness copilot --lane $H/.claude --cmd true CC-184|rc=1 launched=nolog creates=nolog modelmissing=harness=copilot,lane=$H/.claude,spellings=--model effortmissing=harness=copilot,lane=$H/.claude,spellings=--reasoning-effort" \
   "a relaunch naming neither is refused too, the choice being the launch's and not the session's||--harness claude --relaunch --lane $H/.claude --cmd true CC-85|rc=1 launched=nolog modelmissing=harness=claude,lane=$H/.claude,spellings=--model" \
   "a launch naming both launches, which is what the usage gate below then judges|$CHOICE_CMD|--harness claude --lane $H/.claude CC-86|rc=0 launched=1 modelmissing=none effortmissing=none" \
   "opencode has no effort flag to name, so its launch asks the model alone|cmd=true --model anthropic/claude-opus-5|--harness opencode --lane $H/.claude CC-87|rc=0 launched=1 modelmissing=none effortmissing=none"
@@ -1959,5 +1968,28 @@ else
 fi
 
 echo
+echo "=== a copilot launch carries its account, its trust and its identity in the launch line ==="
+# The account is COPILOT_HOME; the same line clears the ambient GitHub App
+# token, puts the shared skills tree back, trusts the worktree through the
+# environment, and reads the account's own token from its file without
+# putting the value in the line. The start command takes the brief through
+# -i, after the launch settings and the question-tool word.
+COPH="$H/.1copilot"
+mkdir -p "$COPH"
+printf 'gho_fixture\n' > "$COPH/copilot-token"
+jq -n '{quota_snapshots: {premium_interactions: {credits_used: 1, remaining: 999999, entitlement: 1000000}}}' > "$FIXTURE_DIR/.1copilot.json"
+run_ot "flags=--model claude-fable-5.1 --reasoning-effort high --allow-all" --harness copilot --lane "$COPH" CC-185
+assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" "rc=0 launched=1 modelmissing=none effortmissing=none" \
+  "a copilot launch naming its model and effort launches on the named account"
+assert_eq "$(observe launch_line)" \
+  "launch_line=clear;,bash,-c,'COPILOT_GITHUB_TOKEN=\$(<,\"\$1\"),&&,export,COPILOT_GITHUB_TOKEN,&&,exec,\"\${@:2}\"',lane-launch,'H/.1copilot/copilot-token',env,-u,GH_TOKEN,-u,GITHUB_TOKEN,COPILOT_HOME='H/.1copilot',COPILOT_SKILLS_DIRS='H/.agents/skills',COPILOT_ALLOW_ALL=true,copilot,'--context','long_context','--no-auto-update','--no-ask-user','--model','claude-fable-5.1','--reasoning-effort','high','--allow-all',-i,'Read,.agents/skills/orch/SKILL.md,and,execute,the,orch,start,workflow,for,CC-185'" \
+  "the launch line reads the token from its file, clears the App token, names the account, the shared skills and the folder trust, and carries every launch setting before the brief"
+assert_eq "$(grep -c 'gho_fixture' "$RUN/tmux.log" || true)" "0" "the token's value never enters the launch line"
+rm -f -- "${COPH:?}/copilot-token"
+run_ot "flags=--model claude-fable-5.1 --reasoning-effort high --allow-all" --harness copilot --lane "$COPH" CC-186
+assert_eq "$(observe launch_line | sed 's/,copilot,.*$//')" \
+  "launch_line=clear;,env,-u,GH_TOKEN,-u,GITHUB_TOKEN,COPILOT_HOME='H/.1copilot',COPILOT_SKILLS_DIRS='H/.agents/skills',COPILOT_ALLOW_ALL=true" \
+  "an account with no token file launches on its stored login, the ambient token still cleared"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

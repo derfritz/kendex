@@ -34,6 +34,11 @@ source "${BASH_SOURCE[0]%/*}/adapters/pi.sh"
 # read, kept apart from a reading and from the empty answer a transcript with
 # no usage line gives: a reader reports this one rather than summing it to zero.
 LANE_CONTEXT_UNREAD=unread
+# The Copilot session record, the one reader of it; sourced by expansion for
+# the reason lane-home.sh is.
+# shellcheck source=copilot-session.sh
+source "${BASH_SOURCE[0]%/*}/copilot-session.sh"
+
 
 # The file a session's reading is recorded in, inside its mailbox directory:
 # `tmp/lane-mail/<item>/` for a lane and `tmp/lane-mail/overseer/` for the
@@ -104,6 +109,7 @@ lane_context_shape() {
   case "${1:-}" in
     codex) printf 'codex\n' ;;
     *claude) printf 'claude\n' ;;
+    *copilot) printf 'copilot\n' ;;
     *) printf 'both\n' ;;
   esac
 }
@@ -137,14 +143,26 @@ lane_context_shape() {
 # that can answer with that variable go through the rule: the codex shape, and
 # the shape naming no harness, which is what a pane running `lanes` itself
 # offers. A claude answer passes through it unchanged, carrying no such shape.
+#
+# Copilot's variable is COPILOT_HOME, the whole config root, and a launch
+# under it holds no private home: the value is the account. A shape naming no
+# harness reads it with the other two, and answers only where exactly one of
+# the three is set.
 lane_context_caller_cfg() { # SHAPE
-  local home="${LANES_HOME:-$HOME}"
+  local home="${LANES_HOME:-$HOME}" set_count=0
   case "${1:-}" in
     claude) printf '%s\n' "${CLAUDE_CONFIG_DIR:-$home/.claude}" ;;
     codex) lane_launch_home_account "${CODEX_HOME:-$home/.codex}" ;;
+    copilot) printf '%s\n' "${COPILOT_HOME:-$home/.copilot}" ;;
     *)
-      [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -n "${CODEX_HOME:-}" ] ||
-        lane_launch_home_account "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
+      [ -z "${CLAUDE_CONFIG_DIR:-}" ] || set_count=$((set_count + 1))
+      [ -z "${CODEX_HOME:-}" ] || set_count=$((set_count + 1))
+      [ -z "${COPILOT_HOME:-}" ] || set_count=$((set_count + 1))
+      if [ "$set_count" -eq 1 ]; then
+        lane_launch_home_account "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-${COPILOT_HOME:-}}}"
+      else
+        printf '\n'
+      fi
       ;;
   esac
 }
@@ -160,6 +178,10 @@ lane_context_caller_cfg() { # SHAPE
 # choice made on a narrower reading than the session's own picks an account
 # the session then judges as spent, hands over again, and pays a window swap
 # and a handoff every cycle.
+#
+# A copilot session's record names its model too, but a Copilot account has
+# one monthly pool for every model, so its answer is empty as codex's is: the
+# session is judged on the account's binding bucket.
 lane_context_mark_model() { # HARNESS MODEL
   case "${1:-}" in
     claude) printf '%s\n' "${2:-}" ;;

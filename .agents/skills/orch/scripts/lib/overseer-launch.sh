@@ -80,7 +80,7 @@ ol_preference_entries() { # VALUE
   while [[ -n "$rest" ]]; do
     entry="${rest%%,*}"
     rest="${rest#*,}"
-    [[ "$entry" =~ ^(claude|codex):[1-9][0-9]*:[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }
+    [[ "$entry" =~ ^(claude|codex|copilot):[1-9][0-9]*:[a-z]+$ ]] || { OL_BAD_ENTRY="$entry"; return 1; }
     OL_ENTRIES+=("$entry")
     OL_NAMED=$((OL_NAMED + 1))
   done
@@ -165,26 +165,28 @@ ol_pick_lane() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR]
 # arguments, and the pane it opens in has nobody at it, so the entry is made
 # through the builder `open-terminal` uses; a launch whose entry could not be
 # made returns 1 with OL_REASON=launch-trust-missing and the builder's reason
-# in OL_TRUST_REASON, rather than opening on the question. The lane reaches
-# the harness through the same builder too: on a host whose `claude` is an
-# account shim, an env prefix in front of it is overwritten for the shim's
-# own name and the session starts on the bare account with nothing on screen
-# saying so.
+# in OL_TRUST_REASON, rather than opening on the question. A copilot session
+# takes its folder trust from the launch line's own environment, which the
+# same builder names as its route. The lane reaches the harness through the
+# same builder too: on a host whose `claude` is an account shim, an env prefix
+# in front of it is overwritten for the shim's own name and the session starts
+# on the bare account with nothing on screen saying so.
+#
+# The brief is a positional prompt on claude and codex; copilot takes it as
+# the value of `-i`, which starts the interactive session and submits it.
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
 ol_command_line() { # HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
-  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd
+  local harness="$1" handoff="$2" lane_dir="$3" launch_dir="$4" flag cmd brief_flag=""
   shift 4
-  if [[ "$harness" == claude ]]; then
-    OL_LANE_VAR=CLAUDE_CONFIG_DIR
-    cmd="claude -n overseer"
-  else
-    OL_LANE_VAR=CODEX_HOME
-    cmd="codex"
-  fi
+  case "$harness" in
+    claude) OL_LANE_VAR=CLAUDE_CONFIG_DIR; cmd="claude -n overseer" ;;
+    copilot) OL_LANE_VAR=COPILOT_HOME; cmd="copilot"; brief_flag=" -i" ;;
+    *) OL_LANE_VAR=CODEX_HOME; cmd="codex" ;;
+  esac
   for flag in "$@"; do
     cmd+=" $(printf %q "$flag")"
   done
-  cmd+=" 'Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff'"
+  cmd+="$brief_flag 'Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $handoff'"
   if ! lane_codex_trust_prepare "$harness" "$lane_dir" "$launch_dir"; then
     OL_REASON=launch-trust-missing
     OL_TRUST_REASON="$LANE_TRUST_REASON"

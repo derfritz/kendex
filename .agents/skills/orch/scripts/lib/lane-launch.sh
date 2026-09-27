@@ -43,14 +43,29 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/adapters/claude.sh"
 # cannot go on being prefixed with the other harness's variable, which starts it
 # on whatever account that harness defaults to with nothing on screen saying so.
 #
-# Codex is named and every other harness takes the Claude variable, which is
-# what a local `--lane` launch on a further harness has always done; `lanes`
-# measures claude and codex only and produces no third value here. A harness
-# added to this repository adds its arm HERE.
+# Codex and Copilot are named and every other harness takes the Claude
+# variable, which is what a local `--lane` launch on a further harness has
+# always done; `lanes` measures claude, codex and copilot and produces no
+# fourth value here. A harness added to this repository adds its arm HERE.
+#
+# COPILOT_HOME is Copilot's one account variable: it moves the whole config
+# root, settings, state and login list alike, so the directory IS the account
+# there as it is for the other two.
 lane_env_prefix() { # HARNESS DIR
   local var=CLAUDE_CONFIG_DIR
-  [[ "$1" != codex ]] || var=CODEX_HOME
+  case "$1" in
+    codex) var=CODEX_HOME ;;
+    copilot) var=COPILOT_HOME ;;
+  esac
   printf '%s=%s\n' "$var" "$2"
+}
+
+# The file a Copilot account directory keeps its GitHub token in, read into
+# COPILOT_GITHUB_TOKEN by the launch line below and by the hosted provider's
+# prefix, and measured by `lanes`. One spelling for every reader; the
+# lane-host contract (../../schemas/lane-host.md) states it for providers.
+lane_copilot_token_file() { # DIR
+  printf '%s/copilot-token\n' "$1"
 }
 
 # How each harness spells the two choices a lane launch must make, for every
@@ -123,6 +138,19 @@ lane_env_prefix() { # HARNESS DIR
 #             field: `--model sonnet:high` names the level pi will run at, so a
 #             launch passing it has made the effort choice and is not asked for
 #             it again.
+#   copilot   `copilot --help` (1.0.88): `--model <model>`, `--reasoning-effort
+#             <level>` with none, minimal, low, medium, high, xhigh and max;
+#             `--allow-all` and `--yolo` each equal `--allow-all-tools
+#             --allow-all-paths --allow-all-urls`, and `--allow-all-tools`
+#             alone is the permission the non-interactive mode requires. Only
+#             the two full spellings transfer: the tools-only word leaves paths
+#             and URLs asking. `--context long_context` selects the 1M window
+#             where the default is about 200K, and `--no-auto-update` keeps a
+#             newer CLI from installing itself under a lane; both are launch
+#             settings, carried by every command built here and every resume,
+#             because a resumed session reads none of the settings-file
+#             defaults (`defaultPermissionMode`, `defaultMode`) that a fresh
+#             interactive one does.
 # The question-tool words, measured on the same installs:
 #   claude    `claude --help`: `--disallowedTools <tools...>`, comma or space
 #             separated. Variadic, so the words are one `=` token: a bare
@@ -143,11 +171,16 @@ lane_env_prefix() { # HARNESS DIR
 #             switch its docs name is the OPENCODE_PERMISSION environment
 #             variable, JSON no flag word carries: the row names none, and an
 #             opencode lane keeps its question tool.
+#   copilot   `copilot --help`: `--no-ask-user` stops the clarifying questions
+#             the CLI otherwise asks at the pane; the `askUser` setting is the
+#             same switch, and the flag is carried so no settings file decides
+#             it.
 LAUNCH_CHOICE_FLAGS=(
   'claude|--model|--effort|-|-|--dangerously-skip-permissions --permission-mode=bypassPermissions --permission-mode=dontAsk|--dangerously-skip-permissions --permission-mode=bypassPermissions|-|--disallowedTools=AskUserQuestion,EnterPlanMode|--settings={"env":{"DISABLE_AUTO_COMPACT":"1"}}'
   'codex|-m --model|model_reasoning_effort=|-|-c|--dangerously-bypass-approvals-and-sandbox --approve-for-me --ask-for-approval=never -a=never|--dangerously-bypass-approvals-and-sandbox|-c check_for_update_on_startup=false|-c features.default_mode_request_user_input=false|-c model_auto_compact_token_limit=9223372036854775807 -c model_auto_compact_token_limit_scope=body_after_prefix -c model_post_turn_compact_threshold_percent=0'
   'opencode|-m --model|-|-|-|-|-|-|-|-'
   'pi|--model|--thinking|:|-|-|-|-|--exclude-tools question|-'
+  'copilot|--model|--reasoning-effort|-|-|--allow-all --yolo --allow-all-tools|--allow-all --yolo|--context long_context --no-auto-update|--no-ask-user|-'
 )
 # The row for harness $1, empty where the table names no such harness.
 launch_choice_row() { # HARNESS
@@ -768,6 +801,9 @@ lane_codex_recorded() { # DIR CONFIG...
 # the three variables above, so a caller names the route in its own launch line.
 #
 #   LANE_TRUST_ROUTE   `none` for a harness that asks no such question,
+#                      `allow-all-env` for Copilot, whose folder trust the
+#                      launch line grants through COPILOT_ALLOW_ALL=true
+#                      (lane_launch_line), so nothing is written for it,
 #                      `preapproved` where the account's own config already
 #                      trusts the directory, `launch-home` where this built a
 #                      private home carrying the entry
@@ -793,6 +829,10 @@ lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
   LANE_TRUST_ROUTE=""
   LANE_TRUST_HOME="$2"
   LANE_TRUST_REASON=""
+  if [ "$harness" = copilot ]; then
+    LANE_TRUST_ROUTE=allow-all-env
+    return 0
+  fi
   if [ "$harness" != codex ]; then
     LANE_TRUST_ROUTE=none
     return 0
@@ -941,11 +981,14 @@ lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
 # render `1codex` running claude's arguments. Both fall through to the prefix
 # form, which selected these lanes correctly all along.
 #
-# Local claude and codex launches only, which the caller establishes before it
-# asks: a launch on another machine answers about the wrong PATH, and
-# CLAUDE_CONFIG_DIR and CODEX_HOME are those two harnesses' own variables. A
-# rendered command that does not open on the harness word has no first word to
-# replace, so it keeps the prefix — which the account check still verifies.
+# Local claude, codex and copilot launches only, which the caller establishes
+# before it asks: a launch on another machine answers about the wrong PATH,
+# and CLAUDE_CONFIG_DIR, CODEX_HOME and COPILOT_HOME are those harnesses' own
+# variables. A rendered command that does not open on the harness word has no
+# first word to replace, so it keeps the prefix — which the account check
+# still verifies. A Copilot launcher such as `1copilot` exports COPILOT_HOME
+# for its own name exactly as the others do, and lane_launch_line puts the
+# rest of a Copilot launch's environment in front of it either way.
 #
 # TEMPLATE non-empty says the command is the CALLER'S own, from a --cmd
 # template, whose first word is not ours to replace. It is an input to this
@@ -955,7 +998,7 @@ lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
 # whatever its caller initialised the form to, and is read back by nothing.
 lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
-  if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex)$ ]]; then
+  if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex|copilot)$ ]]; then
     printf 'unchecked\n'
     return
   fi
@@ -1024,16 +1067,59 @@ lane_launch_compaction_env() { # CMD HARNESS VERIFIED
 # Not the window title: both launchers open their window with an explicit -n,
 # which turns tmux's automatic rename off, so the title keeps the name it was
 # given and never carries the launch line.
+#
+# A Copilot launch carries more than the account variable, and carries it
+# under BOTH forms, because a launcher that exports COPILOT_HOME for its own
+# name exports nothing else:
+#   -u GH_TOKEN -u GITHUB_TOKEN   Copilot reads COPILOT_GITHUB_TOKEN, then
+#                                 GH_TOKEN, then GITHUB_TOKEN, then the stored
+#                                 login. A fleet host holds the GitHub App token
+#                                 in GH_TOKEN for every lane, and a Copilot
+#                                 session that read it would sign in as the
+#                                 App. Both are cleared, so the identity is the
+#                                 account's own token or its stored login, never
+#                                 the ambient one.
+#   COPILOT_SKILLS_DIRS           any COPILOT_HOME value turns off the shared
+#                                 `~/.agents/skills` tree; naming it here puts
+#                                 the shared skills back.
+#   COPILOT_ALLOW_ALL=true        folder trust, a separate gate from the tool
+#                                 permission `--allow-all` grants: the exact
+#                                 spelling `true` trusts the launch directory
+#                                 and loads its hooks, skills and MCP servers;
+#                                 `--allow-all` alone leaves the trust dialog.
+#   COPILOT_GITHUB_TOKEN          where the account directory holds a
+#                                 `copilot-token` file, read into the variable
+#                                 by a `bash -c` that opens the file itself, so
+#                                 the token never appears in the launch line,
+#                                 in the pane or in `ps`. Without the file the
+#                                 login the account's keyring holds is the
+#                                 identity, which a workstation has and a
+#                                 fleet host never does.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
-  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5" compaction="" verified=true line extras token
   if [[ "$harness" == codex ]]; then
     [[ "$form" != unchecked ]] || verified=false
     compaction=$(lane_launch_compaction_env "$cmd" "$harness" "$verified") || return 1
   fi
+  if [[ "$harness" != copilot ]]; then
+    case "$form" in
+      launcher:*) printf '%s%s %s\n' "${compaction:+env $compaction }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
+      *) printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${compaction:+$compaction }" "$cmd" ;;
+    esac
+    return
+  fi
+  extras="COPILOT_SKILLS_DIRS=$(lane_single_quote "${LANES_HOME:-$HOME}/.agents/skills") COPILOT_ALLOW_ALL=true"
   case "$form" in
-    launcher:*) printf '%s%s %s\n' "${compaction:+env $compaction }" "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-    *) printf 'env %s=%s %s%s\n' "$var" "$(lane_single_quote "$dir")" "${compaction:+$compaction }" "$cmd" ;;
+    launcher:*) line="env -u GH_TOKEN -u GITHUB_TOKEN $extras $(lane_single_quote "${form#launcher:}") ${cmd#"$harness" }" ;;
+    *) line="env -u GH_TOKEN -u GITHUB_TOKEN $var=$(lane_single_quote "$dir") $extras $cmd" ;;
   esac
+  token="$(lane_copilot_token_file "$dir")"
+  if [[ -f "$token" ]]; then
+    # The pane's shell splits the line into argv, so `"${@:2}"` is the env
+    # command and everything after it; only the file's path crosses argv.
+    line="bash -c 'COPILOT_GITHUB_TOKEN=\$(< \"\$1\") && export COPILOT_GITHUB_TOKEN && exec \"\${@:2}\"' lane-launch $(lane_single_quote "$token") $line"
+  fi
+  printf '%s\n' "$line"
 }
 
 # The lane variable's value in the DEEPEST process under pane pid $1 that

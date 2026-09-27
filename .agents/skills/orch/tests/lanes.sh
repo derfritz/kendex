@@ -2126,6 +2126,109 @@ table \
   "an account at 95 percent used is refused, five percent headroom being the wall||pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=0" \
   "the setting raises the same bound, and that account is picked|ORCH_LANE_MAX_PCT=96|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 
+echo "=== copilot lanes: one monthly pool, measured in credits ==="
+# A Copilot account is a directory holding its GitHub token; the pool is one
+# monthly bucket every model draws on, read from the internal usage endpoint
+# as counts. Headroom is remaining over entitlement, never the endpoint's own
+# truncated percent_remaining, and every fixture here carries a
+# percent_remaining that disagrees with its counts so the two cannot be
+# confused. A pool at zero is walled whatever the overage flag says, an
+# explicit unlimited seat alone reads as 100 percent headroom, and a body the
+# reader cannot verify leaves the account unmeasured.
+make_copilot_lane() { # DIR
+  mkdir -p "$1"
+  printf 'gho_fixture\n' > "$1/copilot-token"
+}
+copilot_usage() { # USED REMAINING LIMIT OVERAGE_PERMITTED [UNLIMITED] [RESET]
+  jq -n --argjson u "$1" --argjson r "$2" --argjson l "$3" --argjson p "$4" --argjson un "${5:-false}" --arg reset "${6:-2026-10-01}" \
+    '{copilot_plan: "enterprise", quota_reset_date_utc: $reset,
+      quota_snapshots: {premium_interactions: {credits_used: $u, remaining: $r, entitlement: $l,
+        overage_permitted: $p, overage_count: 0, unlimited: $un, percent_remaining: 99.8, token_based_billing: true}}}'
+}
+new_home copilots
+make_copilot_lane "$H/.1copilot"
+make_copilot_lane "$H/.copilot"
+mkdir -p "$H/.copilot-backup" "$H/.2copilot"
+printf '{"loggedInUsers":[]}\n' > "$H/.2copilot/config.json"
+copilot_usage 1043 998957 1000000 true > "$FIXTURE_DIR/.1copilot.json"
+copilot_usage 600000 400000 1000000 false > "$FIXTURE_DIR/.copilot.json"
+table \
+  "every copilot dir holding a marker is a copilot lane, a bare glob match is not, and one with no token is visible||list --harness copilot --json|aliases=1copilot,2copilot,copilot 1copilot.harness=copilot 2copilot.status=no_credentials" \
+  "the pool is one monthly bucket: its used share, the reset at day 1 00:00 UTC, the plan the body names||list --harness copilot --json|1copilot.monthly_pct=1 1copilot.headroom_pct=99 1copilot.binding_bucket=monthly 1copilot.binding_resets_at=2026-10-01T00:00:00Z 1copilot.plan=enterprise 1copilot.status=ok" \
+  "headroom is remaining over entitlement, never the endpoint's truncated percentage||list --harness copilot --json|copilot.monthly_pct=60 copilot.headroom_pct=40" \
+  "the credits object carries the counts beside the percentage||list --harness copilot --json|1copilot.credits.unit=AIC 1copilot.credits.used=1043 1copilot.credits.limit=1000000 1copilot.credits.over=0 1copilot.credits.overage_permitted=true 1copilot.unlimited=false" \
+  "pick names the account with the most room and prints Copilot's own variable||pick --harness copilot|rc=0 out=COPILOT_HOME=$H/.1copilot" \
+  "pick --lane judges one copilot account||pick --lane $H/.copilot --harness copilot|rc=0 out=COPILOT_HOME=$H/.copilot" \
+  "a copilot listing sits beside the other harnesses in an all listing||list --json|aliases=1copilot,2copilot,copilot"
+copilot_usage 1000000 0 1000000 true > "$FIXTURE_DIR/.1copilot.json"
+table \
+  "a pool at zero is walled with overage permitted: paid overage is never room||pick --lane $H/.1copilot --harness copilot --json|rc=3 key=pick-lane-walled,lane=$H/.1copilot,wall=100,bucket=monthly,max-pct=95 wall=100"
+assert_eq "$(jq -c '.credits' <<<"$OUT")" '{"unit":"AIC","used":1000000,"limit":1000000,"over":0,"overage_permitted":true}' \
+  "the walled record still reports the overage flag the endpoint gave, which is never read as room"
+table \
+  "and the chooser refuses it too||pick --harness copilot --max-pct 100|rc=0 out=COPILOT_HOME=$H/.copilot"
+jq -n '{quota_snapshots: {premium_interactions: {unlimited: true}}}' > "$FIXTURE_DIR/.1copilot.json"
+table \
+  "an explicit unlimited seat reads as 100 percent headroom under no bucket||pick --lane $H/.1copilot --harness copilot --json|rc=0 headroom_pct=100 binding_bucket=null unlimited=true monthly_pct=null"
+assert_eq "$(jq -c '.credits' <<<"$OUT")" '{"unit":"AIC","unlimited":true}' "and its credits object says so outright"
+for body in \
+  '{"quota_snapshots": {"premium_interactions": {"percent_remaining": 50, "unlimited": false}}}' \
+  '{"quota_snapshots": {"premium_interactions": {"remaining": "lots", "entitlement": 1000000}}}' \
+  '{"quota_snapshots": {"premium_interactions": {"remaining": 5, "entitlement": 0}}}' \
+  '{"copilot_plan": "enterprise"}'; do
+  printf '%s\n' "$body" > "$FIXTURE_DIR/.1copilot.json"
+  table \
+    "a body the reader cannot verify is unmeasured, never unlimited or idle: $body||pick --lane $H/.1copilot --harness copilot --json|rc=5 status=no_usage_data headroom_pct=null unlimited=false monthly_pct=null"
+done
+# An unlimited flag that is not the boolean true is no flag: the counts beside
+# it still measure the pool.
+printf '%s\n' '{"quota_snapshots": {"premium_interactions": {"remaining": 5, "entitlement": 10, "unlimited": "yes"}}}' > "$FIXTURE_DIR/.1copilot.json"
+table \
+  "an unlimited flag spelled as anything but true is ignored, and the counts beside it measure the pool||pick --lane $H/.1copilot --harness copilot --json|rc=0 status=ok monthly_pct=50 headroom_pct=50 unlimited=false"
+# The reset where the body names none: the first day of the month after now.
+jq -n '{quota_snapshots: {premium_interactions: {credits_used: 1, remaining: 999999, entitlement: 1000000}}}' > "$FIXTURE_DIR/.1copilot.json"
+run_lanes "" list --harness copilot --json
+RESET="$(json '.[] | select(.alias == "1copilot") | .resets.monthly')"
+assert_eq "$(printf '%s' "$RESET" | sed -E 's/^[0-9]{4}-[0-9]{2}-01T00:00:00Z$/day-one/')|$([[ "$RESET" > "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ]] && echo ahead || echo behind)" \
+  "day-one|ahead" "a body naming no reset gets the first day of the next month at 00:00 UTC"
+# Discovery: COPILOT_HOME outside the glob, an ORCH_LANE_DIRS entry typed by
+# its token file, and an excluded one typed by its name.
+XCOP="$TMP_ROOT/elsewhere-copilot"
+make_copilot_lane "$XCOP"
+copilot_usage 1 999999 1000000 false > "$FIXTURE_DIR/elsewhere-copilot.json"
+table \
+  "a COPILOT_HOME outside the home is a copilot lane beside the discovered ones|COPILOT_HOME=$XCOP|list --harness copilot --json|aliases=1copilot,2copilot,copilot,elsewhere-copilot elsewhere-copilot.harness=copilot" \
+  "an ORCH_LANE_DIRS entry holding a copilot token is a copilot lane|ORCH_LANE_DIRS=$H/.1copilot|list --json|aliases=1copilot 1copilot.harness=copilot" \
+  "an excluded copilot entry turns copilot discovery off without being read|ORCH_LANE_DIRS=$H/.copilot;ORCH_LANE_EXCLUDE=copilot|list --harness copilot --json|length=0 fetched=none" \
+  "pick refuses an unknown harness by name||pick --harness gemini|rc=1 key=invalid-pick-harness,option=--harness"
+# A provider row for a copilot account carries the monthly bucket.
+printf 'account=%s\tharness=copilot\tmonthly-pct=40\tmonthly-resets=2026-10-01T00:00:00Z\n' "$H/.1copilot" > "$TMP_ROOT/accounts-copilot.tsv"
+table \
+  "a provider's copilot row carries its monthly bucket|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-copilot.tsv|list --harness copilot --json|rc=0 last.measured_through=host last.harness=copilot last.monthly_pct=40 last.headroom_pct=60 last.binding_bucket=monthly last.binding_resets_at=2026-10-01T00:00:00Z"
+
+# Controls, one per rule, each on a private copy of the script.
+copilot_usage 600000 400000 1000000 false > "$FIXTURE_DIR/.copilot.json"
+COP_MUT="$(mutant_scripts mutant-copilot-headroom lanes)" || exit 1
+mutate_file "$COP_MUT/lanes" '(100 - (($remaining * 100 / $limit) | floor))' '(100 - (($q.percent_remaining | floor)))'
+LANES_REAL="$LANES"; LANES="$COP_MUT/lanes"
+table \
+  "control: headroom read off the endpoint's own percentage reads the pool wrong||list --harness copilot --json|copilot.headroom_pct=99"
+LANES="$LANES_REAL"
+COP_MUT="$(mutant_scripts mutant-copilot-unlimited lanes)" || exit 1
+mutate_file "$COP_MUT/lanes" '($q.unlimited == true) as $unlimited' '($q.unlimited != false) as $unlimited'
+printf '%s\n' '{"quota_snapshots": {"premium_interactions": {"percent_remaining": 50}}}' > "$FIXTURE_DIR/.1copilot.json"
+LANES="$COP_MUT/lanes"
+table \
+  "control: with unlimited read from an absent field an unverified body becomes measured headroom||pick --lane $H/.1copilot --harness copilot --json|rc=0 headroom_pct=100 unlimited=true"
+LANES="$LANES_REAL"
+COP_MUT="$(mutant_scripts mutant-copilot-bind lanes)" || exit 1
+mutate_file "$COP_MUT/lanes" '[{k: "monthly", p: $b.monthly_pct}, {k: "weekly", p: $b.weekly_pct}' '[{k: "weekly", p: $b.weekly_pct}'
+copilot_usage 1000000 0 1000000 true > "$FIXTURE_DIR/.1copilot.json"
+LANES="$COP_MUT/lanes"
+table \
+  "control: without the monthly bucket binding a pool at zero is unmeasured rather than walled||pick --lane $H/.1copilot --harness copilot --json|rc=5 headroom_pct=0 binding_bucket=null"
+LANES="$LANES_REAL"
+
 echo "=== argument handling ==="
 table \
   'an unknown harness is rejected||pick --harness bogus|rc=1' \

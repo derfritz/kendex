@@ -133,6 +133,7 @@ exec git "$@"
         self.account.mkdir()
         (self.account / "setup-token").write_text("claude-secret-fixture")
         (self.account / "auth.json").write_bytes(b'{"seed":"private"}\n')
+        (self.account / "copilot-token").write_text("gho_copilot-secret-fixture\n")
         self.row = dict(repo="owner/repo", item="TEST-1", target="lane.example",
                         clone=str(self.root / "remote clone's"), account=str(self.root / "remote account's"))
         self.inventory = self.root / "inventory.json"
@@ -196,6 +197,22 @@ exec git "$@"
         result = self.create("--reuse", harness="pi")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PI_CODING_AGENT_DIR", result.stdout)
+        # A copilot lane: the token file copied, the prefix reading it into
+        # COPILOT_GITHUB_TOKEN with the App token cleared, the account under
+        # COPILOT_HOME, the shared skills and the folder trust named, and the
+        # token's value in no line the provider printed or logged.
+        result = self.create("--reuse", harness="copilot")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        prefix = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))["remote-prefix"]
+        self.assertIn("COPILOT_GITHUB_TOKEN=$(< \"$1\")", prefix)
+        self.assertIn("unset GH_TOKEN GITHUB_TOKEN", prefix)
+        self.assertIn('COPILOT_HOME="$2"', prefix)
+        self.assertIn('COPILOT_SKILLS_DIRS="$HOME/.agents/skills"', prefix)
+        self.assertIn("COPILOT_ALLOW_ALL=true", prefix)
+        self.assertIn(shlex.quote(self.row["account"] + "/copilot-token"), prefix)
+        self.assertEqual((Path(self.row["account"]) / "copilot-token").read_bytes(), (self.account / "copilot-token").read_bytes())
+        self.assertNotIn(b"gho_copilot-secret-fixture", result.stdout)
+        self.assertNotIn("gho_copilot-secret-fixture", (self.root / "calls").read_text())
         # The tree carries the render its base branch commits and the host
         # carries the Pi packages, so no create, fresh or reused, runs either.
         verbs = {line.split()[1] for line in (self.root / "calls").read_text().splitlines()

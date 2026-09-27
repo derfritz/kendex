@@ -19,7 +19,8 @@
 # and reset beside the percentage so a refusal can name what made the decision.
 #
 # The 5-hour session and the plan-wide weekly window wall every model, so both
-# always count. A model-scoped weekly window walls only the model its own label
+# always count, and so does the monthly pool a Copilot account draws every
+# model from. A model-scoped weekly window walls only the model its own label
 # names, so a launch on another model does not draw on it and it is left out —
 # the difference between refusing an account that is free for this launch and
 # launching one into a wall the binding bucket never showed.
@@ -75,7 +76,8 @@ def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 def lane_measured: (.status == "ok" or .status == "rate_limited");
 
 def wall_rank:
-  if .bucket == "weekly" then 2
+  if .bucket == "monthly" then 3
+  elif .bucket == "weekly" then 2
   elif .bucket == "model" then 1
   else 0
   end;
@@ -88,7 +90,9 @@ def shared_bindings:
   [{bucket: "session", pct: .session_5h_pct,
     resets_at: (.resets.session // null)},
    {bucket: "weekly", pct: .weekly_pct,
-    resets_at: (.resets.weekly // null)}];
+    resets_at: (.resets.weekly // null)},
+   {bucket: "monthly", pct: .monthly_pct,
+    resets_at: (.resets.monthly // null)}];
 
 def model_binding($model):
   ($model | lane_norm) as $m
@@ -107,9 +111,14 @@ def model_binding($model):
 # read as room. With no model named, this bucket decides as it always did.
 #
 # A record whose usage could not be read answers null whatever its other fields
-# say: a window nobody read is not an empty one.
+# say: a window nobody read is not an empty one. A record the endpoint marked
+# `unlimited` outright is the one measured account with no bucket at all: it
+# answers a wall of zero under no bucket name, so it is room at every
+# threshold, and only that explicit flag reaches this arm.
 def binding_bucket:
-  if ((lane_measured | not) or .headroom_pct == null
+  if (lane_measured and .unlimited == true and .headroom_pct == 100)
+  then {bucket: null, label: null, pct: 0, resets_at: null}
+  elif ((lane_measured | not) or .headroom_pct == null
       or .binding_bucket == null) then null
   else {bucket: .binding_bucket,
         label: (if .binding_bucket == "model" then ([.model_buckets[]] | max_by(.pct).label // null) else null end),
@@ -151,10 +160,12 @@ def lane_binding($model; $binding_floor):
 
 def with_lane_binding($model; $binding_floor):
   lane_binding($model; $binding_floor) as $binding
-  | (if $binding == null then [] elif $binding.bucket == "model" then (._rate_prior.model_buckets // [])
+  | (if $binding == null or $binding.bucket == null then []
+     elif $binding.bucket == "model" then (._rate_prior.model_buckets // [])
      else [{label: null,
             pct: (if $binding.bucket == "session" then ._rate_prior.session_5h_pct
-                  elif $binding.bucket == "weekly" then ._rate_prior.weekly_pct else null end),
+                  elif $binding.bucket == "weekly" then ._rate_prior.weekly_pct
+                  elif $binding.bucket == "monthly" then ._rate_prior.monthly_pct else null end),
             resets_at: ._rate_prior.resets[$binding.bucket]}] end
      | map(select((.label // null) == ($binding.label // null)
                   and .resets_at != null and .resets_at == $binding.resets_at))

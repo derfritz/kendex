@@ -1677,6 +1677,194 @@ run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
 assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
   "a subagent of the overseer is judged on neither mark"
 
+# --- copilot -----------------------------------------------------------
+# On Copilot the three hooks run from `.github/hooks`, the event is agentStop,
+# the payload spells its fields in camelCase, a subagent's stop names its own
+# transcript, and every refusal is also the documented JSON answer on stdout.
+# Every row here installs the hooks where kendex renders them for Copilot and
+# sends the payload as Copilot 1.0.88 sends it.
+COP_HOME="$TMP_ROOT/cop-home/.1copilot"
+mkdir -p "$COP_HOME"
+new_copilot_lane() { # NAME BRANCH [JUDGE]
+  new_lane "$1" "$2"
+  rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
+  install_hook "$TEST_DIR/../lane-mail-deliver.sh" "$LANE/.github/hooks/lane-mail-deliver.sh"
+  install_hook "$TEST_DIR/../lane-mail-halt.sh" "$LANE/.github/hooks/lane-mail-halt.sh"
+  install_hook "${3:-$HOOK}" "$LANE/.github/hooks/lane-mail-check.sh"
+}
+# The lead's transcript sits in the directory named for the session.
+COP_TRANSCRIPT="$TMP_ROOT/session-state/s1/events.jsonl"
+mkdir -p "${COP_TRANSCRIPT%/*}"
+: > "$COP_TRANSCRIPT"
+copilot_stop() { # TRANSCRIPT [ACTIVE] [ENV=VAL...]
+  local path="$1" active="${2:-false}"
+  shift; [ $# -eq 0 ] || shift
+  run_payload "$(jq -nc --arg p "$path" --argjson a "$active" \
+    '{sessionId:"s1", transcriptPath:$p, stopReason:"complete", stop_hook_active:$a}')" "$@"
+}
+copilot_tool() { # ARM [COMMAND] [object|string]
+  local judge="$CASE_HOOK" shape="${3:-object}"
+  CASE_HOOK="$LANE/.github/hooks/lane-mail-$1.sh"
+  run_payload "$(jq -nc --arg c "${2:-git status}" --arg shape "$shape" \
+    '{sessionId:"s1", timestamp:1, cwd:"/w", toolName:"bash",
+      toolArgs: (if $shape == "string" then ({command:$c} | tojson) else {command:$c} end)}')"
+  CASE_HOOK="$judge"
+}
+# A Copilot lane's passing turn end reports two gaps: the context, which no
+# session record answers, and the account, which `lanes` measures through the
+# COPILOT_HOME the call carries (unmeasured, no token) or does not (unlisted).
+COP_GAP='session-record=missing;account=unlisted'
+# Every keyed value the run wrote, in order, each under its own English: the
+# leading run keyed_block reads stops at the first explanation.
+cop_keys() {
+  sed -n 's/^lane-mail-check: \([a-z-]*=[a-z-]*\).*/\1/p' "$ERR_FILE" | paste -sd';' -
+}
+stdout_field() { # JQ
+  jq -r "$1" "$TMP_ROOT/stdout" 2>/dev/null || echo unparseable
+}
+# The record the lane's own status line command would have written, through
+# the adapter it writes with; WRITTEN_AT backdates it.
+write_cop_record() { # TOKENS [ALLOW_ALL] [SESSION] [WRITTEN_AT]
+  local session="${3:-s1}" file
+  (
+    . "$REPO_ROOT/skills/orch/scripts/lib/copilot-session.sh"
+    copilot_session_write "$COP_HOME" 1 /w <<<"$(jq -nc --arg s "$session" --arg t "$COP_TRANSCRIPT" --argjson n "$1" --argjson a "${2:-true}" \
+      '{session_id:$s, transcript_path:$t, model:{id:"claude-fable-5.1"},
+        context_window:{used_percentage:($n / 10000), current_context_tokens:$n, context_window_size:1000000},
+        allow_all_enabled:$a}')"
+  )
+  [ -n "${4:-}" ] || return 0
+  file="$COP_HOME/lane-status/$session.json"
+  jq --argjson w "$4" '.written_at = $w' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+drop_cop_record() { # SESSION
+  rm -f -- "${COP_HOME:?}/lane-status/$1.json"
+}
+# The real orch skill where a Copilot hook's install walk finds it, `.github/
+# skills` beside `.github/hooks`, with SKIP left out: the walk from
+# `.github/hooks` never reaches `.claude/skills`, so plant_install holes
+# nothing a Copilot lane runs.
+plant_copilot_install() { # [SKIP]
+  rm -rf -- "${LANE:?}/.github/skills/orch"
+  mkdir -p "$LANE/.github/skills/orch/scripts"
+  ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$LANE/.github/skills/orch/scripts/lane-mail"
+  plant_siblings "$LANE/.github/skills/orch/scripts" "${1:-}"
+}
+
+new_copilot_lane copilot_stop ken-201
+send KEN-201 'Rebase onto main.'
+copilot_stop "$COP_TRANSCRIPT"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: unread=1 decision=block" \
+  "a Copilot lead's turn end with unread mail is held with the documented block answer and exit 0"
+assert_eq "$(stdout_field .reason | grep -c 'Rebase onto main.') $(stdout_field .reason | head -n 1)" \
+  "1 lane-mail-check: unread=1" "the block reason is the refusal text, keyed line first, directive under it"
+copilot_stop "$COP_TRANSCRIPT"
+assert_eq "RC=$RC keyed=$(cop_keys) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 keyed=$COP_GAP stdout=" \
+  "a second stop passes with the two gaps reported and no answer on stdout: the block acknowledged the mail"
+
+send KEN-201 'Then re-arm auto-merge.'
+copilot_stop "$TMP_ROOT/session-state/sub-7/events.jsonl"
+assert_eq "RC=$RC first=$(first_line) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 first=- stdout=" \
+  "a stop naming a transcript under another directory is a subagent's: handed nothing, judged on nothing"
+copilot_stop "$COP_TRANSCRIPT"
+expect 0 "lane-mail-check: unread=1" "the lead's next turn end still finds that directive unread"
+send KEN-201 'And push.'
+run_payload '{"sessionId":"s1","stop_hook_active":false}'
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: unread=1 decision=block" \
+  "a stop naming no transcript is read as the lead's"
+send KEN-201 'Continued.'
+copilot_stop "$COP_TRANSCRIPT" true
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=$COP_GAP" \
+  "the turn Copilot continued after a block skips the mailbox check, as on every harness"
+
+# The halt arm: the deny answer under exit 2, the ack command read out of
+# toolArgs in both shapes, and a decision made from the mailbox alone.
+new_copilot_lane copilot_halt ken-202
+send KEN-202 'Stop pushing.' --halt
+HALT_202=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-202/to-lane.jsonl")
+printf -v READ_HALT_202 '%q inbox --item %q --root %q' "$LANE/.agents/skills/orch/scripts/lane-mail" KEN-202 "$LANE"
+copilot_tool halt
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .permissionDecision)" \
+  "RC=2 first=lane-mail-check: halt=$HALT_202 decision=deny" \
+  "an unread halt denies a Copilot tool call with the documented answer under exit 2"
+assert_eq "$(stdout_field .permissionDecisionReason | grep -cF -- "$READ_HALT_202")" "1" \
+  "the deny reason carries the one command that reads the halt"
+copilot_tool halt "$READ_HALT_202" string
+expect 0 - "the acknowledging command read out of a JSON-string toolArgs passes"
+copilot_tool halt "$READ_HALT_202" object
+expect 0 - "and out of an object toolArgs"
+copilot_tool halt
+expect 2 "lane-mail-check: halt=$HALT_202" "any other call stays refused while the halt stands"
+LANES_CALLS="$TMP_ROOT/copilot-halt-lanes-calls"
+plant_copilot_install lanes
+printf '#!/bin/sh\ntouch %s\nexit 5\n' "$LANES_CALLS" > "$LANE/.github/skills/orch/scripts/lanes"
+chmod +x "$LANE/.github/skills/orch/scripts/lanes"
+"$LANE_MAIL" inbox --item KEN-202 --root "$LANE" >/dev/null
+copilot_tool halt
+assert_eq "RC=$RC lanes=$([ -e "$LANES_CALLS" ] && echo called || echo not-called)" "RC=0 lanes=not-called" \
+  "the halt decision is the mailbox alone: no account read runs before a tool call"
+# The same planted install reaches the turn end, which is the arm the account
+# read belongs to: the row above is not silence from an install the walk
+# never found.
+copilot_stop "$COP_TRANSCRIPT"
+assert_eq "RC=$RC lanes=$([ -e "$LANES_CALLS" ] && echo called || echo not-called)" "RC=0 lanes=called" \
+  "the turn end reaches the same planted lanes, so the halt row's silence is the arm's own"
+
+# The deliver arm hands the lines over and acknowledges none of them.
+new_copilot_lane copilot_deliver ken-203
+send KEN-203 'Rebase first.'
+copilot_tool deliver
+assert_eq "RC=$RC context=$(stdout_field '.hookSpecificOutput.additionalContext' | head -n 1) stderr=$(first_line)" \
+  "RC=0 context=lane-mail-check: unread=1 stderr=-" \
+  "a finished Copilot tool call is handed the unread lines in the hook output"
+copilot_tool deliver
+assert_eq "RC=$RC context=$(stdout_field '.hookSpecificOutput.additionalContext' | head -n 1)" \
+  "RC=0 context=lane-mail-check: unread=1" \
+  "and again at the next call: nothing acknowledged them, since nothing proves the output reached the model"
+copilot_stop "$COP_TRANSCRIPT"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: unread=1 decision=block" \
+  "the turn end hands the same directive over with the answer that is documented, and acknowledges it"
+copilot_stop "$COP_TRANSCRIPT"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=$COP_GAP" "after which it is read"
+
+# The context mark, judged on the session record under COPILOT_HOME and bound
+# to the payload's session and transcript.
+new_copilot_lane copilot_context ken-204
+mkdir -p "$LANE/tmp/lane-mail/KEN-204"
+(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-204 >/dev/null)
+COP_ENV=("COPILOT_HOME=$COP_HOME")
+write_cop_record 499999
+copilot_stop "$COP_TRANSCRIPT" false "${COP_ENV[@]}"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=account=unmeasured" \
+  "a Copilot lane under the mark ends its turn: the record answered, and only the account gap stands"
+write_cop_record 500000
+copilot_stop "$COP_TRANSCRIPT" false "${COP_ENV[@]}"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) named=$(grep -cF -- "workflow-state set KEN-204 handoff " "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: context=500000 decision=block named=1" \
+  "a Copilot lane at the mark is held with the block answer and the record that clears it"
+write_cop_record 500000 true s9
+drop_cop_record s1
+copilot_stop "$COP_TRANSCRIPT" false "${COP_ENV[@]}"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=session-record=missing;account=unmeasured" \
+  "a record for another session leaves the context unjudged under its reason, never read as room"
+write_cop_record 900000 true s1 1000
+copilot_stop "$COP_TRANSCRIPT" false "${COP_ENV[@]}"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=session-record=stale;account=unmeasured" \
+  "a stale record is reported stale and the turn ends"
+write_cop_record 900000
+copilot_stop "$TMP_ROOT/session-state/s1/other.jsonl" false "${COP_ENV[@]}"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=session-record=wrong-transcript;account=unmeasured" \
+  "a record naming another transcript than the payload's is not this session's"
+usage_line claude 900000 > "$COP_TRANSCRIPT"
+drop_cop_record s1
+copilot_stop "$COP_TRANSCRIPT" false "${COP_ENV[@]}"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=session-record=missing;account=unmeasured" \
+  "a Copilot transcript is never read for a figure, whatever usage lines it carries"
+: > "$COP_TRANSCRIPT"
+
 mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the hook
   MUTANT_PATH="$TMP_ROOT/$1.sh"
   local name="$1" source="${MUTANT_SOURCE:-$HOOK}"
@@ -2493,6 +2681,84 @@ text_line claude 'Picked main.' > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: question-turn=$TRANSCRIPT" \
   "control: without the question test a closing statement is refused as a question"
+
+# --- copilot controls ----------------------------------------------------
+# The caller rule removed: a subagent's stop then consumes the lead's mail.
+mutant copilot-any-caller -e 's@^  \[ "\$TRANSCRIPT_DIR" = "\$SESSION" \] || CALLER=subagent$@  :@'
+new_copilot_lane control_cop_caller ken-211 "$MUTANT_PATH"
+send KEN-211 'Rebase onto main.'
+copilot_stop "$TMP_ROOT/session-state/sub-7/events.jsonl"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
+  "RC=0 first=lane-mail-check: unread=1 decision=block" \
+  "control: without the transcript rule a subagent's stop is handed the lead's directive"
+
+# The camelCase session id unread: the session is empty, the lead rule fails,
+# and the lead's own stop is taken for a subagent's.
+mutant copilot-snake-session -e 's@str(either(.session_id; .sessionId))@str(.session_id)@'
+new_copilot_lane control_cop_session ken-212 "$MUTANT_PATH"
+send KEN-212 'Rebase onto main.'
+copilot_stop "$COP_TRANSCRIPT"
+expect 0 - "control: without the camelCase read the lead's own turn end is handed nothing"
+
+# The block answer removed: the mail is acknowledged and the turn ends in
+# silence, which is the loss the answer exists to prevent.
+mutant copilot-no-block -e "s@^      jq -nc --arg reason \"\$text\" '{decision: \"block\", reason: \$reason}'\$@      :@"
+new_copilot_lane control_cop_block ken-213 "$MUTANT_PATH"
+send KEN-213 'Rebase onto main.'
+copilot_stop "$COP_TRANSCRIPT"
+assert_eq "RC=$RC first=$(first_line) stdout=$(cat "$TMP_ROOT/stdout")" "RC=0 first=lane-mail-check: unread=1 stdout=" \
+  "control: without the block answer a Copilot turn end passes with the directive acknowledged unseen"
+
+# The deny answer removed: the call is still refused by its exit, and the
+# words that name the acknowledging command never reach the model.
+mutant copilot-no-deny -e "s@^      jq -nc --arg reason \"\$text\" '{permissionDecision: \"deny\", permissionDecisionReason: \$reason}'\$@      :@"
+new_copilot_lane control_cop_deny ken-214 "$MUTANT_PATH"
+send KEN-214 'Stop.' --halt
+copilot_tool halt
+assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout")" "RC=2 stdout=" \
+  "control: without the deny answer the refusal carries no words the model reads"
+
+# The deliver arm acknowledging on Copilot: a delivery nothing proves reached
+# the model then consumes the directive.
+mutant copilot-deliver-acks -e 's@^    \[ "\$HARNESS" = copilot \] || \\$@    false || \\@'
+new_copilot_lane control_cop_deliver ken-215 "$MUTANT_PATH"
+send KEN-215 'Rebase first.'
+copilot_tool deliver
+copilot_stop "$COP_TRANSCRIPT"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=$COP_GAP" \
+  "control: with the deliver arm acknowledging, the turn end finds the directive consumed"
+
+# The toolArgs read dropped: the one command that clears a halt is refused.
+mutant copilot-no-toolargs -e 's@^      // (copilot | strings) // ""@      // ""@'
+new_copilot_lane control_cop_toolargs ken-216 "$MUTANT_PATH"
+send KEN-216 'Stop.' --halt
+HALT_216=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-216/to-lane.jsonl")
+printf -v READ_HALT_216 '%q inbox --item %q --root %q' "$LANE/.agents/skills/orch/scripts/lane-mail" KEN-216 "$LANE"
+copilot_tool halt "$READ_HALT_216" object
+expect 2 "lane-mail-check: halt=$HALT_216" "control: without the toolArgs read the acknowledging command is refused"
+
+# The context read from the record removed: a Copilot lane past the mark
+# ends its turn.
+mutant copilot-no-record-mark -e 's@^      \[ "\$CS_TOKENS" -lt "\$MARK" \] || refuse_handoff context "\$CS_TOKENS"$@      :@'
+new_copilot_lane control_cop_record ken-217 "$MUTANT_PATH"
+mkdir -p "$LANE/tmp/lane-mail/KEN-217"
+write_cop_record 900000
+copilot_stop "$COP_TRANSCRIPT" false "${COP_ENV[@]}"
+assert_eq "RC=$RC keyed=$(cop_keys)" "RC=0 keyed=account=unmeasured" \
+  "control: without the record judgement a Copilot lane past the mark ends its turn"
+
+# The halt arm judging the marks: an account read then runs before a tool
+# call, outside the deadline the halt decision has to land in.
+mutant halt-judges-marks -e 's@^  \[ "\$ARM" = stop \] && \[ "\$CALLER" = lead \] || return 0$@  [ "$CALLER" = lead ] || return 0@'
+new_copilot_lane control_cop_local ken-218 "$MUTANT_PATH"
+mkdir -p "$LANE/tmp/lane-mail/KEN-218"
+CONTROL_LANES_CALLS="$TMP_ROOT/copilot-control-lanes-calls"
+plant_copilot_install lanes
+printf '#!/bin/sh\ntouch %s\nexit 5\n' "$CONTROL_LANES_CALLS" > "$LANE/.github/skills/orch/scripts/lanes"
+chmod +x "$LANE/.github/skills/orch/scripts/lanes"
+copilot_tool halt
+assert_eq "lanes=$([ -e "$CONTROL_LANES_CALLS" ] && echo called || echo not-called)" "lanes=called" \
+  "control: with the marks judged before a tool call, an account read runs inside the halt deadline"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

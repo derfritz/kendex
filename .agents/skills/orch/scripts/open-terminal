@@ -319,7 +319,7 @@ if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
   elif [[ -z "$CMD_TEMPLATE" ]]; then
     case "$HARNESS" in
       claude) TIMEOUT_IS_READ=true ;;
-      codex) [[ -z "$LANE" ]] || TIMEOUT_IS_READ=true ;;
+      codex | copilot) [[ -z "$LANE" ]] || TIMEOUT_IS_READ=true ;;
     esac
   fi
 fi
@@ -822,9 +822,9 @@ if [[ -n "$LANE" ]]; then
   # The judged wall is the window of the model the launch passes, which the gate
   # above has already established it names.
   #
-  # Claude and codex only: `lanes` measures those two accounts and no others, so
-  # a lane on any further harness has no window to read and keeps launching as
-  # it did.
+  # Claude, codex and copilot only: `lanes` measures those three accounts and
+  # no others, so a lane on any further harness has no window to read and
+  # keeps launching as it did.
   #
   # EVERY named lane is judged here, hosted relaunch included. A usage window
   # belongs to the account, not to the copy of the credential that reads it, so a
@@ -842,20 +842,21 @@ if [[ -n "$LANE" ]]; then
   # it is not an empty one either — only the provider saying it holds the account
   # makes it a window this machine was never going to read.
   #
-  # Asked for claude and codex, and only where the CALLER named the lane:
+  # Asked for claude, codex and copilot, and only where the CALLER named the
+  # lane:
   # `--lane auto` asked the same question inside its own pick, so a second
   # judgment here would report on a choice already made.
   #
   # A --wait-slot launch asks again once its wait ends, the window having had
   # that long to move.
-  [[ "$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex)$ ]] || LANE_GATE=true
+  [[ "$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex|copilot)$ ]] || LANE_GATE=true
   [[ "$LANE_GATE" != true ]] || named_lane_judge || exit 1
   ot_message lane-selected "lane=$LANE_ENV"
 fi
 # The hosted pane is driven by keystrokes, the provider's --account is the
-# lane's config dir and the host protocol names three harnesses, so each gap is
+# lane's config dir and the host protocol names four harnesses, so each gap is
 # refused before any host is created.
-if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then
+if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ) ]]; then
   ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" "harness=$HARNESS" >&2
   exit 1
 fi
@@ -1112,13 +1113,18 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
       codex) printf 'codex %sresume %s%q%s\n' "$exec" "$flags" "$session_id" "$line" ;;
       pi) printf 'pi %s--session %q%s\n' "$flags" "$session_id" "$line" ;; esac; return
   fi
+  # The copilot arms take the brief as the value of `-i`, which starts the
+  # interactive session and submits it, and are prose built from the same
+  # shell-inert characters as the codex arms, for the same reason.
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
     linear:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
+    linear:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for %s'\n" "$flags" "$item" ;;
     linear:opencode) printf "opencode %s--prompt '/orch start %s'\n" "$flags" "$item" ;;
     linear:pi)       printf "pi %s'/skill:orch start %s'\n" "$flags" "$item" ;;
     github:claude)   printf "claude -n github-%q %s'/orch start github %s#%s'\n" "$item" "$flags" "$repo" "$item" ;;
     github:codex)    printf "codex %s'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
+    github:copilot)  printf "copilot %s-i 'Read .agents/skills/orch/SKILL.md and execute the orch start workflow for github %s#%s'\n" "$flags" "$repo" "$item" ;;
     github:opencode) printf "opencode %s--prompt '/orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
     github:pi)       printf "pi %s'/skill:orch start github %s#%s'\n" "$flags" "$repo" "$item" ;;
     *) ot_message harness-unsupported "harness=$HARNESS" >&2; exit 1 ;;
@@ -1990,12 +1996,14 @@ launch_finish() {
       cmd="env $compaction_env $cmd"
     fi
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
-  elif [[ -n "$LANE_ENV" || "$HARNESS" == codex ]]; then
+  elif [[ -n "$LANE_ENV" || "$HARNESS" == codex || "$HARNESS" == copilot ]]; then
     # Folder trust belongs to the DIRECTORY the harness opens into, not to the
     # account a launch was aimed at, so the preparation runs for every local
     # codex launch and not only for one under --lane. A launch with no lane
     # opens into a worktree nothing has trusted just the same, and the command
-    # shape workflows/handoff.md § 2 documents passes no --lane at all.
+    # shape workflows/handoff.md § 2 documents passes no --lane at all. A
+    # copilot launch is here for the same reason: its trust and the rest of
+    # its environment ride the launch line, whatever account it opens on.
     #
     # Which variable, and which directory it starts from: the resolved lane
     # where one was picked, otherwise the account the pane would have opened on
@@ -2006,6 +2014,10 @@ launch_finish() {
     # is a place to read a config from, not another account.
     if [[ -n "$LANE_ENV" ]]; then
       launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"
+    elif [[ "$HARNESS" == copilot ]]; then
+      # The account the pane would open on by itself: COPILOT_HOME where the
+      # launcher's own environment names one, else the CLI's default home.
+      launch_var=COPILOT_HOME; launch_home="${COPILOT_HOME:-${LANES_HOME:-$HOME}/.copilot}"
     else
       launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)" || return 1
     fi

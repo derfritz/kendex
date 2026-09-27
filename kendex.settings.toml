@@ -130,6 +130,7 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # Max concurrent lanes the overseer keeps in flight. open-terminal refuses a
 # fleet launch past it.
 ORCH_OVERSEER_LANES = "12"
+# Entries are harness:rank:effort, harness claude, codex or copilot.
 ORCH_OVERSEER_PREFERENCE = "claude:1:high,codex:1:high,claude:2:high,codex:2:high"
 
 # Max live lanes on one account. open-terminal refuses a fleet launch past it;

@@ -53,18 +53,30 @@ cat > "$BIN/kendex" <<'STUB'
 #!/bin/sh
 case "$1:$2:$3" in
   tier-model:claude:1) echo fable ;;
+  tier-model:copilot:1) echo claude-fable-5.1 ;;
   *) exit 1 ;;
 esac
 STUB
-chmod +x "$BIN/claude" "$BIN/kendex"
 # A pane whose foreground process names claude, for `register` to read the
 # harness off: a copy of sleep, since a script or a shell named for the
 # harness can reset the process name tmux reads.
 cp "$(command -v sleep)" "$BIN/hclaude"
+# The copilot stub records its account variable and argv as the claude one
+# does, and the environment the launch line puts around it.
+cat > "$BIN/copilot" <<STUB
+#!/bin/sh
+{ printf 'lane=%s\n' "\${COPILOT_HOME:-}"; printf 'env=%s|%s|%s|%s\n' "\${COPILOT_SKILLS_DIRS:-}" "\${COPILOT_ALLOW_ALL:-}" "\${COPILOT_GITHUB_TOKEN:+set}" "\${GH_TOKEN:-unset}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.copilot"
+echo 'esc to interrupt'
+exec sleep 100000
+STUB
+chmod +x "$BIN/claude" "$BIN/kendex" "$BIN/copilot"
 
 new_home fleet
 make_lane "$H" claude
 make_lane "$H" eclaude
+mkdir -p "$H/.1copilot"
+printf 'gho_fixture\n' > "$H/.1copilot/copilot-token"
+jq -n '{quota_snapshots: {premium_interactions: {credits_used: 1, remaining: 999999, entitlement: 1000000}}}' > "$FIXTURE_DIR/.1copilot.json"
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -101,6 +113,7 @@ field() { sed -n "s/.* $2=\([^ ]*\).*/\1/p" <<<"$(sed -n 1p <<<"$1")"; }
 layout() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$1 > 0' | tr '\n' ';'; }
 overseers() { tm list-windows -t fleet -F '#{window_name}' | awk '$0 == "overseer"' | wc -l | tr -d ' '; }
 recorded_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.claude"; else printf 'none'; fi; }
+recorded_copilot() { if [[ -f "$TMP_ROOT/argv.copilot" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.copilot"; else printf 'none'; fi; }
 BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
 echo "=== oversee ==="
@@ -290,6 +303,18 @@ mutate_file "$CODEXCTL/oversee" 'codex) harness=codex; home="${CODEX_HOME:-$ACCO
 register_codex "$CODEXCTL/oversee"
 assert_eq "$RC|$(recorded home)" "0|$H/.codex" \
   "control: a register that takes the account for the home loses the private CODEX_HOME"
+
+# A copilot entry: the first overseer opens on the copilot account under
+# COPILOT_HOME with the entry's model and effort, copilot's own bypass word,
+# its launch settings, and the brief through -i, in an environment carrying
+# the shared skills, the folder trust and the account's token with the App
+# token cleared.
+run_oversee "ORCH_OVERSEER_PREFERENCE=copilot:1:high" "ORCH_LANE_DIRS=$H/.1copilot" "GH_TOKEN=app-token" -- launch --wait-secs 20
+assert_eq "$RC|$(recorded account)|$(recorded_copilot)" \
+  "0|$H/.1copilot|lane=$H/.1copilot;env=$H/.agents/skills|true|set|unset;--model;claude-fable-5.1;--reasoning-effort;high;--allow-all;--context;long_context;--no-auto-update;--no-ask-user;-i;$BRIEF;" \
+  "a copilot preference entry opens the overseer on the copilot account with explicit model and effort, every launch setting and the identity environment"
+assert_eq "$(recorded launch_line | grep -c 'gho_fixture' || true)" "0" "the recorded launch line never carries the token's value"
+tm kill-window -t "$(recorded window)"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

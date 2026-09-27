@@ -284,14 +284,30 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
         prefix = "exec " + shlex.join(["bash", "-c",
             'CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$2"',
             "lane-host", remote_account + "/setup-token"])
+    elif args.harness == "copilot":
+        # The account's own GitHub token, read into COPILOT_GITHUB_TOKEN on the
+        # host from the file the launch line reads locally: the fleet host holds
+        # the GitHub App token in GH_TOKEN for every lane, and Copilot reads that
+        # second, so both ambient names are cleared before the token is named.
+        # COPILOT_SKILLS_DIRS puts the shared skills back that any COPILOT_HOME
+        # value turns off, and COPILOT_ALLOW_ALL=true trusts the worktree, which
+        # is a separate gate from the tool permission the launch flag grants.
+        put(row, remote_account + "/copilot-token", (account / "copilot-token").read_bytes())
+        prefix = "exec " + shlex.join(["bash", "-c",
+            'COPILOT_GITHUB_TOKEN=$(< "$1") && export COPILOT_GITHUB_TOKEN && unset GH_TOKEN GITHUB_TOKEN'
+            ' && export COPILOT_HOME="$2" COPILOT_SKILLS_DIRS="$HOME/.agents/skills" COPILOT_ALLOW_ALL=true'
+            ' && exec bash -lc "$3"',
+            "lane-host", remote_account + "/copilot-token", remote_account])
     else:
         put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
         name = "CODEX_HOME" if args.harness == "codex" else "PI_CODING_AGENT_DIR"
         prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " bash -lc"
     # The caller's folder trust and hook approval land where each harness reads
     # them; Claude's relative path resolves in the SSH session's remote home.
-    approval = account / "lane-host" / {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}[args.harness]
-    if approval.exists():
+    # A copilot lane's trust is the COPILOT_ALLOW_ALL in its prefix; it places
+    # no approval file.
+    approval = account / "lane-host" / {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json", "copilot": "none"}[args.harness]
+    if args.harness != "copilot" and approval.exists():
         data = approval.read_bytes()
         if args.harness == "claude":
             # Every Claude lane and the host user share the one ~/.claude.json.
@@ -393,6 +409,10 @@ path), account (absolute remote harness config directory). Each target/clone
 pair and each item occurs once. SSH keys and host verification use your SSH config.
 LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
 create copies its .env.local and, for a fresh clone, .cache/linear without locks.
+A copilot lane copies ACCOUNT/copilot-token and runs under COPILOT_HOME at the
+row's account directory with COPILOT_GITHUB_TOKEN read from that file, GH_TOKEN
+and GITHUB_TOKEN cleared, COPILOT_SKILLS_DIRS at the host's shared skills tree
+and COPILOT_ALLOW_ALL=true for folder trust.
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
 create renders nothing and installs no Pi package: the worktree carries the
@@ -426,7 +446,7 @@ fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
 worktree command when the target exists; a missing target uses plain create.
 Every create passes --hosted, so the item's worktree sits at the clone's one
 hosted lane path (worktree path --hosted), and path= names it.
-stop --item ID --harness claude|codex|pi resolves the owned worktree through
+stop --item ID --harness claude|codex|pi|copilot resolves the owned worktree through
 the installed worktree command, signals only matching harness processes whose
 current directory is that worktree, waits for them to exit, and prints
 stopped item=ID processes=COUNT. A worktree that is no longer a directory exits
@@ -453,7 +473,7 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
     make = sub.add_parser("create")
     for field in ("item", "repo", "account"):
         make.add_argument("--" + field, required=True)
-    make.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
+    make.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
     make.add_argument("--relaunch", action="store_true")
     make.add_argument("--reuse", action="store_true")
     for verb in ("cat", "put", "append", "touch", "close"):
@@ -463,7 +483,7 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
             action.add_argument("path")
     stopping = sub.add_parser("stop")
     stopping.add_argument("--item", required=True)
-    stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
+    stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi", "copilot"))
     sub.add_parser("list")
     args = parser.parse_args()
     inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")
