@@ -53,7 +53,6 @@ cat > "$BIN/kendex" <<'STUB'
 #!/bin/sh
 case "$1:$2:$3" in
   tier-model:claude:1) echo fable ;;
-  tier-model:copilot:1) echo claude-fable-5.1 ;;
   *) exit 1 ;;
 esac
 STUB
@@ -306,15 +305,31 @@ assert_eq "$RC|$(recorded home)" "0|$H/.codex" \
 
 # A copilot entry: the first overseer opens on the copilot account under
 # COPILOT_HOME with the entry's model and effort, copilot's own bypass word,
-# its launch settings, and the brief through -i, in an environment carrying
-# the shared skills, the folder trust and the account's token with the App
-# token cleared.
+# its launch settings, its question-off word, and the brief through -i, in
+# an environment carrying the shared skills, the folder trust and the
+# account's token with the App token cleared. The model is the copilot
+# ladder's, not kendex's: the kendex stub answers no copilot tier, as the
+# real one does not, and the launch still names the rank's model.
 run_oversee "ORCH_OVERSEER_PREFERENCE=copilot:1:high" "ORCH_LANE_DIRS=$H/.1copilot" "GH_TOKEN=app-token" -- launch --wait-secs 20
 assert_eq "$RC|$(recorded account)|$(recorded_copilot)" \
   "0|$H/.1copilot|lane=$H/.1copilot;env=$H/.agents/skills|true|set|unset;--model;claude-fable-5.1;--reasoning-effort;high;--allow-all;--context;long_context;--no-auto-update;--no-ask-user;-i;$BRIEF;" \
-  "a copilot preference entry opens the overseer on the copilot account with explicit model and effort, every launch setting and the identity environment"
+  "a copilot preference entry opens the overseer on the copilot account with the ladder's model, its effort, every launch setting and the identity environment"
 assert_eq "$(recorded launch_line | grep -c 'gho_fixture' || true)" "0" "the recorded launch line never carries the token's value"
 tm kill-window -t "$(recorded window)"
+# A copilot rank past the ladder is a setting to fix: refused before any pick.
+run_oversee "ORCH_OVERSEER_PREFERENCE=copilot:5:high" "ORCH_LANE_DIRS=$H/.1copilot" -- launch --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee: model-failed entry=copilot:5:high|0" \
+  "a copilot rank the ladder does not hold refuses model-failed, nothing opened"
+# Control: with the copilot ladder emptied in a private copy of the library,
+# the same entry that launched above is refused, so the launch's model came
+# from the ladder and from nowhere else.
+LADDER="$(mutant_scripts ladder lib/overseer-launch.sh)" || exit 1
+mutate_file "$LADDER/lib/overseer-launch.sh" "OL_COPILOT_LADDER='claude-fable-5.1 claude-opus-5 claude-sonnet-5 claude-haiku-4.5'" "OL_COPILOT_LADDER=''"
+OVERSEE_BIN="$LADDER/oversee" run_oversee "ORCH_OVERSEER_PREFERENCE=copilot:1:high" "ORCH_LANE_DIRS=$H/.1copilot" -- launch --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee: model-failed entry=copilot:1:high|0" \
+  "control: without the copilot ladder the entry that launched is refused"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

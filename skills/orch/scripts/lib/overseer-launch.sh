@@ -11,6 +11,7 @@
 #
 #   ol_preference_entries  the ORCH_OVERSEER_PREFERENCE parse
 #   ol_lanes               `lanes` on this machine's copy of each account
+#   ol_entry_model         the model an entry's rank names on its harness
 #   ol_pick_record         one `lanes pick --json` record, for a caller's
 #                          own counts
 #   ol_pick_lane           one `lanes pick` for one entry, with the counts a
@@ -94,6 +95,31 @@ ol_preference_entries() { # VALUE
 # judge one account on two copies.
 ol_lanes() { # ARGS...
   ORCH_LANE_HOST=local "$SCRIPT_DIR/lanes" "$@"
+}
+
+# ol_entry_model HARNESS RANK — the model an entry's RANK names on HARNESS,
+# on stdout. On claude and codex it is `kendex tier-model`'s answer, so the
+# kendex tier table stays the one owner of what a rank means there. On copilot
+# that table names no model on purpose: an agent file's model outranks the
+# launch's `--model`, so kendex writes none (docs/decisions/D008). A launch is
+# the other side of that rule, an explicit model on every one, so the copilot
+# ladder is spelled here and nowhere else: the model list of `copilot --help`
+# 1.0.88, in the tier table's own order, top tier first. Returns 1 with the
+# cause on stderr for a rank neither source answers; the caller refuses
+# `model-failed` on it.
+OL_COPILOT_LADDER='claude-fable-5.1 claude-opus-5 claude-sonnet-5 claude-haiku-4.5'
+ol_entry_model() { # HARNESS RANK
+  local -a ladder=()
+  case "$1" in
+    copilot)
+      read -r -a ladder <<<"$OL_COPILOT_LADDER"
+      if (( $2 < 1 || $2 > ${#ladder[@]} )); then
+        echo "rank $2 is not on the copilot ladder (1-${#ladder[@]})" >&2
+        return 1
+      fi
+      printf '%s\n' "${ladder[$2 - 1]}" ;;
+    *) kendex tier-model "$1" "$2" ;;
+  esac
 }
 
 # ol_pick_record HARNESS MODEL TRIGGER [EXCLUDE_DIR] — the one `lanes pick

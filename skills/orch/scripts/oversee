@@ -35,8 +35,10 @@
 #     4. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        (harness claude, codex or copilot)
 #        entries, in order, and open on the first whose harness has a lane
-#        above ORCH_OVERSEER_HEADROOM_PCT: `kendex tier-model` names the
-#        entry's model, `lanes pick` the lane, judged on the bucket that
+#        above ORCH_OVERSEER_HEADROOM_PCT: lib/overseer-launch.sh's
+#        ol_entry_model names the entry's model (`kendex tier-model` on
+#        claude and codex, its own copilot ladder on copilot, where the
+#        kendex tier table names no model), `lanes pick` the lane, judged on the bucket that
 #        walls that model and held to the reading the session will take of
 #        itself (lib/overseer-launch.sh § ol_pick_lane). A rank the tier
 #        ladder cannot answer refuses `model-failed`; an entry with no
@@ -130,7 +132,7 @@ message() { # KEY FIELD=VALUE...
     preference-empty) text='A first launch has no caller whose own harness and lane could stand in, so ORCH_OVERSEER_PREFERENCE must name at least one entry.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     invalid-question-tool) text='ORCH_QUESTION_TOOL takes off or overseer.' ;;
-    model-failed) text='kendex tier-model named no model for this entry; a preference naming a rank the ladder cannot answer is a setting to fix, not an entry to pass over.' ;;
+    model-failed) text='No model for this entry: kendex tier-model answers claude and codex, and the copilot ladder in lib/overseer-launch.sh answers copilot. A preference naming a rank neither answers is a setting to fix, not an entry to pass over.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     no-lane-qualifies) text='No lane of any harness the preference names is above the headroom trigger; nothing was launched. entries counts the preference entries walked; walled and unmeasured are the accounts the sweeps refused and the accounts nothing could measure.' ;;
     launch-choice-failed) text='The launch flag table cannot state this harness'\''s model, effort or permission words. Nothing was launched.' ;;
@@ -335,7 +337,7 @@ ol_preference_entries "${ORCH_OVERSEER_PREFERENCE:-}" || die invalid-preference 
 chosen="" harness="" model="" effort="" lane_dir=""
 for entry in "${OL_ENTRIES[@]}"; do
   IFS=: read -r harness rank effort <<<"$entry"
-  model="$(kendex tier-model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
+  model="$(ol_entry_model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
     || die model-failed "entry=$entry"
   rc=0
   ol_pick_lane "$harness" "$model" "$HEADROOM_TRIGGER" || rc=$?

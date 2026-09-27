@@ -129,8 +129,10 @@
 #        `mark-unmeasured`, either of which ends the run there; a reached mark
 #        otherwise falls through to step 3.
 #     3. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
-#        entries: harness claude or codex, rank a position on the kendex tier
-#        ladder (1 is the top tier; `kendex tier-model` names its model),
+#        entries: harness claude, codex or copilot, rank a position on the
+#        tier ladder (1 is the top tier; lib/overseer-launch.sh's
+#        ol_entry_model names its model: `kendex tier-model` on claude and
+#        codex, the copilot ladder spelled there on copilot),
 #        effort a lowercase word. Every launch but one goes through `lanes
 #        pick --harness --model --min-headroom-pct`, the headroom trigger
 #        itself, so no successor is opened on an account at or below it. The
@@ -435,7 +437,7 @@ message() { # KEY FIELD=VALUE...
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude, codex or copilot.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     walled-lane-unknown) text='The account this walled overseer is spending could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, is the shape that reaches this.' ;;
-    model-failed) text='kendex tier-model named no model for this entry.' ;;
+    model-failed) text='No model for this entry: kendex tier-model answers claude and codex, and the copilot ladder in lib/overseer-launch.sh answers copilot.' ;;
     model-window-unknown) text='The claude adapter names no context window for the model this entry resolves to, and a successor runs with its compaction off, so it would reach its wall with no handoff mark. Nothing was launched. Name a rank whose model the window table in lib/adapters/claude.sh names.' ;;
     launch-choice-failed) text='The launch flag table cannot state a required model or an equivalent cross-harness permission posture. Nothing was launched.' ;;
     no-lane-qualifies) text='No lane walked is above the headroom trigger; nothing was launched and this overseer keeps running. The walk is every ORCH_OVERSEER_PREFERENCE entry, counted in entries, and then the fleet-wide sweep of the harness the fallback field names, which is none where the walk never reached that entry, so a preference aimed at a spent harness is not what this says. walled and unmeasured are the accounts those sweeps refused and the accounts nothing could measure, counted once per sweep. The mark field names the trigger. At mark=headroom the account and resets fields name the account that ran out and when the bucket this session spends frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
@@ -1068,7 +1070,7 @@ walk_entries() {
       # rather than a successor whose first turn is a usage banner. A rank the
       # tier ladder cannot answer ends the run here rather than skipping the
       # entry: it is a setting to fix, not a lane to pass over.
-      model="$(kendex tier-model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
+      model="$(ol_entry_model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
         || die model-failed "entry=$entry"
       pick_model="$model"
     fi
