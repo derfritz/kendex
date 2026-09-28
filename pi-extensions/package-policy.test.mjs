@@ -35,7 +35,8 @@ function shardConditions(workflow) {
 // A package's CI entry point is `test:ci` when it declares one and `test`
 // otherwise. `test:ci` is how a package whose full `test` script cannot run on
 // a runner — pi-claude-bridge's needs API keys and a live provider — states the
-// subset CI does prove, so the exclusion is readable here instead of looking
+// provider bridges need live accounts. The script states the subset CI does
+// prove, so the exclusion is readable here instead of looking
 // like an uncovered package.
 function ciEntryPoint(pkg) {
 	if (pkg.scripts?.["test:ci"]) return "npm run test:ci";
@@ -218,7 +219,10 @@ test("a step conditioned on a shard the matrix does not run is reported, not acc
 	assert.deepEqual(unrunPackages(workflow), [], "precondition: the real workflow wires every package");
 	const typo = workflow.replaceAll("matrix.shard == 'pi-claude-bridge'", "matrix.shard == 'pi-claude-brige'");
 	assert.notEqual(typo, workflow, "the mutation matched nothing — this control no longer mutates the step it names");
-	assert.deepEqual(unrunPackages(typo), ["pi-claude-bridge: no step on a shard the matrix runs invokes `npm run test:ci`"]);
+	assert.deepEqual(unrunPackages(typo), [
+		"pi-claude-bridge: no step on a shard the matrix runs invokes `npm run test:ci`",
+		"pi-codex-bridge: no step on a shard the matrix runs invokes `npm run test:ci`",
+	]);
 });
 
 // Must-fail control for the reader above: with every package covered, a reader

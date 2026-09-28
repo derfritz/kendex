@@ -762,7 +762,7 @@ jobs:
 
       # ---- shard: node — every node and bun suite here but the bridge's,
       # which the shard below runs -----------------------------------------
-      # setup-node also serves the `pi-claude-bridge` shard's two steps below.
+      # setup-node also serves the provider bridge shard below.
       - uses: actions/setup-node@v4
         if: matrix.shard == 'node' || matrix.shard == 'pi-claude-bridge'
         with:
@@ -940,8 +940,8 @@ jobs:
         working-directory: pi-extensions/pi-task-panel
         run: npm test
 
-      # ---- shard: pi-claude-bridge — the node shard's hottest step, split
-      # off so its build-plus-suite overlaps the rest instead of extending it.
+      # ---- shard: pi-claude-bridge — the provider bridge suites, split off
+      # so their build-plus-suites overlap the rest instead of extending it.
       # The one package whose CI entry point is `test:ci` rather than `test`:
       # its `test` script also runs integration suites that need API keys and
       # a live provider, which a runner has neither of. `test:ci` is the
@@ -966,6 +966,18 @@ jobs:
       - name: pi-claude-bridge bundle matches a clean lockfile build
         if: matrix.shard == 'pi-claude-bridge'
         working-directory: pi-extensions/pi-claude-bridge
+        run: git diff --exit-code -- bundle/
+
+      - name: pi-codex-bridge unit suite
+        if: matrix.shard == 'pi-claude-bridge'
+        working-directory: pi-extensions/pi-codex-bridge
+        run: |
+          npm ci --no-audit --no-fund
+          npm run test:ci
+
+      - name: pi-codex-bridge bundle matches a clean lockfile build
+        if: matrix.shard == 'pi-claude-bridge'
+        working-directory: pi-extensions/pi-codex-bridge
         run: git diff --exit-code -- bundle/
 
   # Full UI validation reaches the required aggregator on every PR and
