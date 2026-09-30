@@ -28,7 +28,7 @@ headers="" fmt=""
 while [[ $# -gt 0 ]]; do
   case "$1" in -D) headers="$2"; shift 2;; -w) fmt="$2"; shift 2;; *) shift;; esac
 done
-printf 'HTTP/2 %s\r\nX-RateLimit-Requests-Limit: 12\r\nx-ratelimit-requests-remaining: %s\r\nX-RateLimit-Requests-Reset: 1790764800000\r\n\r\n' "$TEST_STATUS" "$TEST_REMAINING" >"$headers"
+printf 'HTTP/2 %s\r\nX-RateLimit-Requests-Limit: 12\r\nx-ratelimit-requests-remaining: %s\r\nX-RateLimit-Requests-Reset: 1790764800000\r\nX-RateLimit-Endpoint-Requests-Reset: 1790764900000\r\nX-RateLimit-Complexity-Reset: 1790765000000\r\n\r\n' "$TEST_STATUS" "$TEST_REMAINING" >"$headers"
 if [[ "$TEST_STATUS" == 200 ]]; then
   printf '{"data":{"viewer":{"id":"user-id","name":"fixture"}}}'
 else
@@ -50,7 +50,9 @@ run_output out rc run 10000 200 11 '' users me
 assert_eq 'request succeeds' "$rc" 0
 rows="$(jq -s . "$JOURNAL")"
 assert_jq 'journal records request attribution and response headers' "$rows" \
-  'length == 1 and .[0] == {utc:"1970-01-01T02:46:40Z",epoch:10000,caller:"KEN-2267",lane_item:"KEN-2267",resource:"users",action:"me",http_status:"200",remaining:11,limit:12,reset:1790764800000,endpoint_reset:null,complexity_reset:null}'
+  'length == 1 and .[0] == {utc:"1970-01-01T02:46:40Z",epoch:10000,caller:"KEN-2267",lane_item:"KEN-2267",resource:"users",action:"me",http_status:"200",remaining:11,limit:12,reset:1790764800000,endpoint_reset:1790764900000,complexity_reset:1790765000000}'
+assert_jq 'journal records raw endpoint reset' "$rows" '.[0].endpoint_reset == 1790764900000'
+assert_jq 'journal records raw complexity reset' "$rows" '.[0].complexity_reset == 1790765000000'
 assert_not_contains 'journal has no authorization secret' "$rows" 'fixture'
 
 # Independent timestamps put one row on the excluded boundary and one just
@@ -84,10 +86,13 @@ run_output out rc run 13601 200 0 12 users me
 assert_contains 'low shared Remaining warns before local share is spent' "$out" 'cause=shared-quota-low'
 run_output out rc run 13601 429 0 12 users me
 assert_ne 'rate limit fails the command' "$rc" 0
-assert_contains '429 reports the server reset' "$out" '"reset":1790764800000'
+assert_jq '429 reports the server reset' "${out##*$'\n'}" '.reset == 1790764800000'
+assert_jq '429 reports endpoint and complexity resets' "${out##*$'\n'}" '.endpoint_reset == 1790764900000 and .complexity_reset == 1790765000000'
 assert_eq 'each 429 retry is journaled' "$(jq -s length "$JOURNAL")" 4
 run_output out rc run 13601 400 0 12 users me
-assert_contains 'RATELIMITED HTTP 400 reports the reset' "$out" '"reset":1790764800000'
+assert_ne 'RATELIMITED HTTP 400 fails the command' "$rc" 0
+assert_jq 'RATELIMITED HTTP 400 reports the reset' "${out##*$'\n'}" '.reset == 1790764800000'
+assert_jq 'RATELIMITED HTTP 400 reports endpoint and complexity resets' "${out##*$'\n'}" '.endpoint_reset == 1790764900000 and .complexity_reset == 1790765000000'
 
 for budget in junk 0 01 1000000000; do
   run_output out rc run 13601 200 10 "$budget" users me

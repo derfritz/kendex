@@ -14,13 +14,25 @@ world() {
 }
 tracker_pass() {
   ERR="$STUB_DIR/err"
-  OUT="$(run_watch -- --max-loops 1 --since 2026-08-15T09:00:00Z --state "$STUB_DIR/state.json" 2>"$ERR")" && RC=0 || RC=$?
+  OUT="$(run_watch "$@" -- --max-loops 1 --since 2026-08-15T09:00:00Z --state "$STUB_DIR/state.json" 2>"$ERR")" && RC=0 || RC=$?
 }
 world tracker_interval
+# Linear's complete safe list includes descriptions and completed history.
+# Keep the interval case's triage and owed items inside a full team payload.
+LARGE_TRACKER="$TMP_ROOT/tracker-large.json"
+jq 'map(. + {description: ("Full issue description with requirements and evidence.\n" * 64)})
+  + [range(3;2262) | {id: ("KEN-" + tostring), state: "Done", priority: 3,
+      created_at: "2026-08-01T00:00:00Z",
+      description: ("Full issue description with requirements and evidence.\n" * 64)}]' \
+  "$STUB_DIR/tracker.out" >"$LARGE_TRACKER"
+cp -- "$LARGE_TRACKER" "$STUB_DIR/tracker.out"
 tracker_pass
 assert_eq "$RC" 0 'initial shared tracker read succeeds' "$ERR"
 assert_eq "$(wc -l <"$STUB_DIR/tracker.calls" | tr -d ' ')" 1 'triage and owed share one live list' "$ERR"
 assert_contains "$OUT" 'owed KEN-1 state=in-review' 'owed includes items older than the triage floor' "$ERR"
+assert_eq "$(jq -s '.[0].issues == .[1] and (.[0].issues | length) == 2261' \
+  "$CASE_REPO_ROOT/.cache/linear/watch-team.json" "$STUB_DIR/tracker.out")" true \
+  'large snapshot preserves the complete team list and descriptions' "$ERR"
 printf '[{"id":"KEN-3","state":"In Progress","priority":2,"created_at":"2026-08-15T10:00:00Z"}]\n' >"$STUB_DIR/tracker.out"
 printf '1786960800\n' >"$STUB_DIR/now.epoch"
 tracker_pass
@@ -30,9 +42,30 @@ printf '1786960801\n' >"$STUB_DIR/now.epoch"
 tracker_pass
 assert_eq "$(wc -l <"$STUB_DIR/tracker.calls" | tr -d ' ')" 2 'at the interval boundary the watch lists once' "$ERR"
 assert_contains "$OUT" 'EVENT triage KEN-3' 'the next live list supplies new triage items' "$ERR"
+printf '[{"id":"FLEET-1","state":"In Review","priority":2,"created_at":"2026-08-15T10:00:00Z"}]\n' >"$STUB_DIR/tracker.out"
+tracker_pass LINEAR_TEAM=fleet
+assert_eq "$RC" 0 'a changed team succeeds on a fresh snapshot' "$ERR"
+assert_eq "$(wc -l <"$STUB_DIR/tracker.calls" | tr -d ' ')" 3 'a changed team makes one new live request' "$ERR"
+assert_eq "$(cat "$STUB_DIR/tracker.args")" 'issues list --team fleet --max --format=safe' \
+  'the new request selects the changed team' "$ERR"
+assert_contains "$OUT" 'EVENT triage FLEET-1' 'triage selects the new team results' "$ERR"
+printf '{"triaged":[{"issue":"FLEET-1","verdict":"kept"}]}\n' >"$STUB_DIR/oversee-state.json"
+tracker_pass LINEAR_TEAM=fleet
+assert_eq "$(wc -l <"$STUB_DIR/tracker.calls" | tr -d ' ')" 3 'owed reuses the changed team snapshot' "$ERR"
+assert_contains "$OUT" 'owed FLEET-1 state=in-review' 'owed selects the new team results' "$ERR"
+assert_not_contains "$OUT" 'KEN-3' 'the changed team does not reuse the previous team results' "$ERR"
+assert_eq "$(jq -c '[.team, [.issues[].id]]' "$CASE_REPO_ROOT/.cache/linear/watch-team.json")" \
+  '["fleet",["FLEET-1"]]' 'the shared snapshot now belongs to the changed team' "$ERR"
 printf '{}\n' >"$CASE_REPO_ROOT/.cache/linear/watch-team.json"
 tracker_pass
 assert_eq "$RC" 2 'corrupt snapshot refuses rather than hiding tracker work' "$ERR"
+
+world tracker_explicit_interval
+tracker_pass ORCH_WATCH_TRACKER_INTERVAL=1
+printf '1786957202\n' >"$STUB_DIR/now.epoch"
+tracker_pass ORCH_WATCH_TRACKER_INTERVAL=1
+assert_eq "$(wc -l <"$STUB_DIR/tracker.calls" | tr -d ' ')" 2 \
+  'an explicit nondefault interval still controls refresh' "$ERR"
 
 world tracker_invalid_interval
 ERR="$STUB_DIR/invalid.err"
@@ -50,6 +83,35 @@ world tracker_control
 WATCH_BIN="$MUTANT" tracker_pass
 WATCH_BIN="$MUTANT" tracker_pass
 assert_eq "$(wc -l <"$STUB_DIR/tracker.calls" | tr -d ' ')" 4 'control: disabling cache freshness makes the no-request pin red' "$ERR"
+
+# Must-fail: disable only team identity while retaining snapshot freshness.
+MUTANT="$(mutant_scripts tracker-team-mutant/orch lib/watch-tracker.sh)/oversee-watch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-team-mutant/github"
+mutate_file "${MUTANT%/*}/lib/watch-tracker.sh" \
+  'elif .team != $team then 0 else .read_at end' 'elif false then 0 else .read_at end'
+world tracker_team_control
+WATCH_BIN="$MUTANT" tracker_pass
+printf '[{"id":"FLEET-1","state":"In Review","priority":2,"created_at":"2026-08-15T10:00:00Z"}]\n' >"$STUB_DIR/tracker.out"
+WATCH_BIN="$MUTANT" tracker_pass LINEAR_TEAM=fleet
+assert_eq "$(wc -l <"$STUB_DIR/tracker.calls" | tr -d ' ')" 1 \
+  'control: disabled team match makes the new-request pin red' "$ERR"
+assert_contains "$OUT" 'owed KEN-1 state=in-review' \
+  'control: disabled team match selects the previous team instead' "$ERR"
+assert_not_contains "$OUT" 'FLEET-1' 'control: disabled team match loses the selected team results' "$ERR"
+
+# Must-fail: move only snapshot serialization back to argv. The complete
+# Linear team payload exceeds the host's argument limit before jq starts.
+MUTANT="$(mutant_scripts tracker-payload-mutant/orch lib/watch-tracker.sh)/oversee-watch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-payload-mutant/github"
+mutate_file "${MUTANT%/*}/lib/watch-tracker.sh" \
+  'jq -c --arg team "$LINEAR_TEAM" --argjson now "$now"' \
+  'jq -cn --arg team "$LINEAR_TEAM" --argjson now "$now" --argjson issues "$out"'
+mutate_file "${MUTANT%/*}/lib/watch-tracker.sh" \
+  '{team: $team, read_at: $now, issues: .}' '{team: $team, read_at: $now, issues: $issues}'
+world tracker_payload_control
+cp -- "$LARGE_TRACKER" "$STUB_DIR/tracker.out"
+WATCH_BIN="$MUTANT" tracker_pass
+assert_eq "$RC" 2 'control: argv serialization makes the large-payload success pin red' "$ERR"
 
 # Must-fail: disable only the positive interval grammar.
 MUTANT="$(mutant_scripts tracker-setting-mutant/orch oversee-watch)/oversee-watch"

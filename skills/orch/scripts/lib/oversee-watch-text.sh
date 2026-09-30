@@ -399,8 +399,9 @@ The long pass's events, checked and reported in this order:
                              unjudged harness=<h>>` per item the tracker holds
                              as work the fleet owes that launch_queue lacks:
                              with LINEAR_TEAM, the team's In Progress and In
-                             Review items, one live read, a priority of 0 (none)
-                             printed `-`; with none, every open PR of the first
+                             Review items from the shared interval-cached team
+                             snapshot (ORCH_WATCH_TRACKER_INTERVAL), a priority
+                             of 0 (none) printed `-`; with none, every open PR of the first
                              --repo on an issue-N branch, from a listing of its
                              own that exits 2 as owed-list-truncated at 1000.
                              A record running, preparing or parked owes

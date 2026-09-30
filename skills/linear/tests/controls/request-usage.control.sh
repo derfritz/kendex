@@ -23,3 +23,13 @@ control_expect 'invalid budget junk names its key'
 control_replace scripts/lib/usage.sh 1 \
   '    if [[ -n "$LINEAR_HOURLY_BUDGET" ]] && ! [[ "$LINEAR_HOURLY_BUDGET" =~ ^[1-9][0-9]{0,8}$ ]]; then' \
   '    if false; then'
+
+control_expect 'journal records raw endpoint reset'
+control_replace scripts/lib/usage.sh 1 \
+  '       endpoint_reset: number("x-ratelimit-endpoint-requests-reset"),' \
+  '       endpoint_reset: (number("x-ratelimit-endpoint-requests-reset") | null),'
+
+control_expect 'journal records raw complexity reset'
+control_replace scripts/lib/usage.sh 1 \
+  '       complexity_reset: number("x-ratelimit-complexity-reset")}'\'' "$1"' \
+  '       complexity_reset: (number("x-ratelimit-complexity-reset") | null)}'\'' "$1"'

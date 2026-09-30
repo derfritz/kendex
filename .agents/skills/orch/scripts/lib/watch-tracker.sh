@@ -25,8 +25,8 @@ watch_tracker_list() (
   mkdir -p -- "${file%/*}" || die tracker-list-failed "" "path=$file"
   tmp="$(mktemp "${file}.XXXXXX")" || die tracker-list-failed "" "path=$file"
   trap 'rm -f -- "$tmp"' EXIT
-  jq -cn --arg team "$LINEAR_TEAM" --argjson now "$now" --argjson issues "$out" \
-    '{team: $team, read_at: $now, issues: $issues}' >"$tmp" \
+  jq -c --arg team "$LINEAR_TEAM" --argjson now "$now" \
+    '{team: $team, read_at: $now, issues: .}' <<<"$out" >"$tmp" \
     || die tracker-list-invalid "" "path=$file"
   mv -- "$tmp" "$file" || die tracker-list-failed "" "path=$file"
   printf '%s\n' "$out"

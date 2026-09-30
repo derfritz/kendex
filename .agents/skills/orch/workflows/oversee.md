@@ -147,12 +147,14 @@ awk 'NF {line[++count]=$0} END {first=count-39; if (first < 1) first=1; for (i=f
 
 ### Bounded issue reads
 
-For each `triage` or `heartbeat` pass, read the watch's cached complete team list. The watch refreshes it once per `ORCH_WATCH_TRACKER_INTERVAL`, not once per event. Run each code line in a separate tool call. The second line is the only issue-list result the overseer reads. It emits each identifier, title, and `## Done when` body. The last line removes the complete response.
+Use only identifiers from the current watch block's `EVENT triage` lines as verifier input. The watch owns the fleet-start and acknowledgement checks. Write those identifiers as a JSON array to `tmp/oversee-triage-ids.json` with the harness file-write tool. With no `triage` event, run no verifier. Keep the complete team snapshot for the watch's owed reads; do not send its historical items to the verifier.
+
+Read the selected bodies from the watch's cached team snapshot. The watch refreshes it once per `ORCH_WATCH_TRACKER_INTERVAL`, not once per event. Run each code line in a separate tool call. The second line is the only issue-list result the overseer reads. It emits each selected identifier, title, and `## Done when` body. The last line removes the selected response and identifier file.
 
 ```bash
-jq '.issues' .cache/linear/watch-team.json > tmp/oversee-triage-source.json
+jq --slurpfile ids tmp/oversee-triage-ids.json '[.issues[] | select(.id as $id | $ids[0] | index($id))]' .cache/linear/watch-team.json > tmp/oversee-triage-source.json
 jq '[.[] | {identifier: .id, title, done_when: ((("\n" + (.description // "")) | gsub("\r\n"; "\n") | split("\n## Done when\n")) as $sections | if ($sections | length) > 1 then ($sections[1] | split("\n## ")[0] | gsub("^[[:space:]]+|[[:space:]]+$"; "")) else "" end)}]' tmp/oversee-triage-source.json
-rm -f tmp/oversee-triage-source.json
+rm -f tmp/oversee-triage-source.json tmp/oversee-triage-ids.json
 ```
 
 ### Judgement at every event
