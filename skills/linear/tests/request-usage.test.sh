@@ -171,52 +171,68 @@ printf 'invalid-json\n' >"$JOURNAL"
 run_output out rc run 13601 200 10 '' usage
 assert_ne 'corrupt journal refuses instead of an empty rollup' "$rc" 0
 
-# Git materializes tracked .cache/.gitkeep in a linked worktree. Worktree
-# setup can also omit the link when its main-checkout source is absent.
+# Git materializes tracked .cache/.gitkeep. Worktree's links.sh shares either
+# the whole parent or the untracked linear child without replacing that parent.
 MANAGED="$TMP_ROOT/managed"
 mkdir -p "$MANAGED/main/.cache"
 git -C "$MANAGED/main" init -q -b main
 git -C "$MANAGED/main" config gc.auto 0
 git -C "$MANAGED/main" config maintenance.auto false
-printf '[env]\nWORKTREE_SYMLINKS = ".cache//"\n' >"$MANAGED/main/kendex.settings.toml"
 touch "$MANAGED/main/.cache/.gitkeep"
-git -C "$MANAGED/main" add .cache/.gitkeep kendex.settings.toml
+git -C "$MANAGED/main" add .cache/.gitkeep
 git -C "$MANAGED/main" -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false commit -qm base
 git -C "$MANAGED/main" worktree add -qb lane "$MANAGED/ken-2270"
 TEST_ROOT="$MANAGED/ken-2270"
-TEST_CACHE_ROOT=none
-while read -r state main_cache; do
-  rm -rf -- "$TEST_ROOT/.cache" "$MANAGED/main/.cache"
-  [[ "$state" != materialized ]] || mkdir -p "$TEST_ROOT/.cache"
+while read -r state main_cache config redirect expected; do
+  rm -rf -- "$TEST_ROOT/.cache" "$MANAGED/main/.cache" "$TEST_ROOT/subdir" "$MANAGED/main/subdir"
+  rm -f -- "$TEST_ROOT/kendex.settings.toml"
+  [[ "$state" == missing ]] || mkdir -p "$TEST_ROOT/.cache"
   [[ "$main_cache" != present ]] || mkdir -p "$MANAGED/main/.cache"
+  case "$state" in
+    parent-link|cold-link)
+      rm -rf -- "$TEST_ROOT/.cache"
+      [[ "$state" != parent-link ]] || mkdir -p "$MANAGED/main/.cache/linear"
+      ln -s "$MANAGED/main/.cache" "$TEST_ROOT/.cache" ;;
+    child-link)
+      mkdir -p "$MANAGED/main/.cache/linear"
+      ln -s "$MANAGED/main/.cache/linear" "$TEST_ROOT/.cache/linear" ;;
+  esac
+  case "$config" in
+    managed) printf '[env]\nWORKTREE_SYMLINKS = ".cache//"\n' >"$TEST_ROOT/kendex.settings.toml" ;;
+    optout) printf '[env]\nWORKTREE_SYMLINKS = "tmp"\n' >"$TEST_ROOT/kendex.settings.toml" ;;
+    empty) printf '[env]\nWORKTREE_SYMLINKS = ""\n' >"$TEST_ROOT/kendex.settings.toml" ;;
+    default) : ;;
+  esac
+  TEST_CACHE_ROOT=none
+  selected="$TEST_ROOT"
+  case "$redirect" in
+    main) TEST_CACHE_ROOT="$MANAGED/main"; selected="$TEST_CACHE_ROOT" ;;
+    main-subdir) TEST_CACHE_ROOT="$MANAGED/main/subdir"; selected="$TEST_CACHE_ROOT"; mkdir -p "$selected" ;;
+    worktree-subdir) TEST_CACHE_ROOT="$TEST_ROOT/subdir"; selected="$TEST_CACHE_ROOT"; mkdir -p "$selected" ;;
+  esac
+  journal="$selected/.cache/linear/requests.jsonl"
   : >"$ROOT/curl-log"
   run_output out rc run 24000 200 11 '' users me
-  assert_ne "managed $state cache with $main_cache main cache refuses usage initialization" "$rc" 0
-  assert_contains "managed $state cache delegates the refusal" "$out" 'Cache-refused:'
-  assert_not "managed $state cache refuses before curl" test -s "$ROOT/curl-log"
-  assert_not "managed $state cache creates no local journal directory" test -e "$TEST_ROOT/.cache/linear"
+  refusal=no; [[ "$out" != *Cache-refused:* ]] || refusal=yes
+  calls=0; [[ ! -s "$ROOT/curl-log" ]] || calls=1
+  lane=absent
+  if [[ -e "$journal" ]]; then lane="$(jq -sr 'map(.lane_item) | join(",")' "$journal")"; fi
+  local_cache=absent
+  [[ ! -e "$TEST_ROOT/.cache/linear" ]] || local_cache=present
+  assert_eq "cache ownership $state $main_cache $config $redirect" \
+    "$rc:$refusal:$calls:$lane:$local_cache" "$expected"
 done <<'CASES'
-materialized present
-materialized missing
-missing present
-missing missing
+materialized present managed worktree 1:yes:0:absent:absent
+materialized missing managed worktree 1:yes:0:absent:absent
+missing present managed worktree 1:yes:0:absent:absent
+missing missing managed worktree 1:yes:0:absent:absent
+materialized present default worktree 1:yes:0:absent:absent
+parent-link present managed worktree 0:no:1:KEN-2270:present
+cold-link present managed worktree 0:no:1:KEN-2270:present
+child-link present managed worktree 0:no:1:KEN-2270:present
+materialized present optout worktree 0:no:1:KEN-2270:present
+missing present empty worktree 0:no:1:KEN-2270:present
+materialized present managed main 0:no:1:KEN-2270:absent
+materialized present managed main-subdir 0:no:1:KEN-2270:absent
+materialized present managed worktree-subdir 0:no:1:KEN-2270:absent
 CASES
-
-mkdir -p "$MANAGED/main/.cache"
-ln -s "$MANAGED/main/.cache" "$TEST_ROOT/.cache"
-run_output out rc run 24000 200 11 '' users me
-assert_eq 'intact worktree link permits request journaling' "$rc" 0
-assert_jq 'worktree link journals in the shared main cache' "$(jq -s . "$MANAGED/main/.cache/linear/requests.jsonl")" \
-  'length == 1 and .[0].lane_item == "KEN-2270"'
-rm -- "$TEST_ROOT/.cache"
-printf '[env]\nWORKTREE_SYMLINKS = "tmp"\n' >"$TEST_ROOT/kendex.settings.toml"
-run_output out rc run 24000 200 11 '' users me
-assert_eq 'explicit cache opt-out permits local request journaling' "$rc" 0
-assert 'explicit cache opt-out creates its local journal' test -s "$TEST_ROOT/.cache/linear/requests.jsonl"
-
-printf '[env]\nWORKTREE_SYMLINKS = ".cache"\n' >"$TEST_ROOT/kendex.settings.toml"
-TEST_CACHE_ROOT="$MANAGED/main"
-run_output out rc run 24001 200 11 '' users me
-assert_eq 'cache redirect bypasses the broken caller worktree link' "$rc" 0
-assert_jq 'cache redirect journals in the selected main cache' "$(jq -s . "$MANAGED/main/.cache/linear/requests.jsonl")" \
-  'length == 2 and .[1].lane_item == "KEN-2270"'

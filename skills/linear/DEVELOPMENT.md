@@ -46,6 +46,8 @@ The guard proves a team is configured, not that a write lands in it. A mutation 
 
 ## Request accounting
 
+`scripts/lib/cache.sh::cache_worktree_cache_clobbered` owns cache sharing for sync and request initialization. It checks the selected physical cache only at an actual linked-worktree root. The nearest existing ancestor determines ownership before a cold cache exists. `tests/request-usage.test.sh` holds shared-parent and shared-child layouts from worktree's `scripts/lib/links.sh`, local-cache settings, redirects, and isolated caches in one table. `tests/sync-worktree-cache-guard.test.sh` holds the sync entry path.
+
 `scripts/lib/usage.sh::linear_usage_rollup` owns the over-share decision for both API warnings and usage reports. The recorder appends to the archive without reading it. It atomically replaces the active-hour snapshot under the request lock and preserves that snapshot's first observation time. Only reports build command rankings. `tests/request-usage.test.sh` measures jq input bytes to prove that expired archive growth adds no request-path work. Its controls switch the request input to the archive and force the report branch on API answers.
 
 ## Tests

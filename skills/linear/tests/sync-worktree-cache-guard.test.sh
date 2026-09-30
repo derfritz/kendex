@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# Verifies a git operation re-materialized a
-# WORKTREE_SYMLINKS-managed `.cache` symlink in a linked worktree as a real
-# directory holding only the tracked `.gitkeep`, and sync — seeing what looked
-# like a cold cache — silently re-pulled the entire ~21 MB Linear history into
-# the worktree-local dir, burning the shared API budget. Sync must fail closed
-# in that state: refuse loudly BEFORE any API call, naming the worktree, the
-# expected symlink, and the repair command.
+# Git materializes tracked .cache/.gitkeep in a linked worktree. Sync refuses
+# this isolated managed cache before its lock creates directories or calls API.
+# Layout coverage belongs to request-usage.test.sh's cache ownership table.
 #
 # Controls: a bare sync on a healthy main checkout, a --full sync in a
 # worktree whose `.cache` symlink is intact, and a repo whose configured

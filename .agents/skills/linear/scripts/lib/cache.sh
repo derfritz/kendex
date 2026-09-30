@@ -81,45 +81,40 @@ CACHE_COMMENTS_LOCK="$CACHE_DIR/.comments.lock"
 # =============================================================================
 # WORKTREE CLOBBER GUARD
 # =============================================================================
-# A git operation can re-materialize a WORKTREE_SYMLINKS-managed `.cache`
-# symlink in a linked worktree as a real, near-empty directory. The resolved
-# cache dir then looks exactly like a cold cache, and a full re-sync silently
-# re-pulls the entire issue/comment history into the worktree-local dir —
-# burning a large slice of the shared Linear API budget. These helpers detect
-# that state before sync or request journaling creates a local cache.
-
-# True when the resolved cache root is a linked worktree whose `.cache` is
-# missing or not a symlink: directory creation would make writes local. The
-# main checkout may also lack `.cache` when worktree setup skipped the link.
-# When WORKTREE_SYMLINKS is set
-# (loaded from project config by common.sh) and does NOT manage `.cache`, the
-# repo has explicitly opted its worktrees into local caches and the guard
-# stands down. Sets CACHE_WORKTREE_MAIN_ROOT for the refusal message.
+# Git can materialize a managed cache during checkout. Worktree's links.sh
+# preserves tracked parents and shares untracked children, so ownership is
+# the physical cache destination, not the type of its parent directory.
+# True only for an isolated managed cache at an actual linked-worktree root.
+# Redirects elsewhere and explicitly local caches are outside that ownership.
 CACHE_WORKTREE_MAIN_ROOT=""
 cache_worktree_cache_clobbered() {
-    local root="$CACHE_PROJECT_ROOT" common_dir="" main_root="" entry=""
+    local root="$CACHE_PROJECT_ROOT" top="" common_dir="" main_root="" entry=""
+    local selected="$CACHE_DIR" expected="" physical="" shared=""
     CACHE_WORKTREE_MAIN_ROOT=""
-    [[ -n "$root" ]] || return 1
-    # An intact link routes writes to the shared cache, even on a cold checkout.
-    [[ ! -L "$root/.cache" ]] || return 1
-    common_dir="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" || return 1
-    [[ -n "$common_dir" ]] || return 1
-    [[ "$common_dir" == /* ]] || common_dir="$root/$common_dir"
-    main_root="$(linear_cache_canonical_existing_dir "$(dirname "$common_dir")")" || return 1
-    [[ "$main_root" != "$root" ]] || return 1
-    if [[ -n "${WORKTREE_SYMLINKS:-}" ]]; then
-        local manages_cache=false stripped=""
+    [[ -e "$root/.git" ]] || return 1
+    top="$(git -C "$root" rev-parse --show-toplevel)" || exit 1
+    top="$(linear_cache_canonical_existing_dir "$top")" || exit 1
+    [[ "$root" == "$top" ]] || return 1
+    common_dir="$(git -C "$top" rev-parse --git-common-dir)" || exit 1
+    [[ "$common_dir" == /* ]] || common_dir="$top/$common_dir"
+    main_root="$(linear_cache_canonical_existing_dir "${common_dir%/*}")" || exit 1
+    [[ "$main_root" != "$top" ]] || return 1
+    if [[ "${WORKTREE_SYMLINKS+x}" ]]; then
         for entry in ${WORKTREE_SYMLINKS}; do
-            # The worktree config normalizer strips ANY number of trailing
-            # slashes; match it, or ".cache//" would read as an opt-out.
-            stripped="$entry"
-            while [[ "$stripped" == */ ]]; do stripped="${stripped%/}"; done
-            if [[ "$stripped" == ".cache" ]]; then
-                manages_cache=true
-                break
-            fi
+            while [[ "$entry" == */ ]]; do entry="${entry%/}"; done
+            [[ "$entry" != .cache ]] || break
         done
-        [[ "$manages_cache" == true ]] || return 1
+        [[ "$entry" == .cache ]] || return 1
+    fi
+    expected="$main_root/.cache/linear"
+    # Resolve the nearest existing ancestor on both sides for a cold cache.
+    while [[ ! -d "$selected" && "$selected" != "$root" ]]; do
+        selected="${selected%/*}"; expected="${expected%/*}"
+    done
+    physical="$(linear_cache_canonical_existing_dir "$selected")" || exit 1
+    if [[ -d "$expected" ]]; then
+        shared="$(linear_cache_canonical_existing_dir "$expected")" || exit 1
+        [[ "$physical" != "$shared" ]] || return 1
     fi
     CACHE_WORKTREE_MAIN_ROOT="$main_root"
     return 0
@@ -129,13 +124,13 @@ cache_worktree_clobber_refusal() {
     {
         printf 'Cache-refused: worktree=%s cache=%s expected=%s\n' \
             "$CACHE_PROJECT_ROOT" "$CACHE_PROJECT_ROOT/.cache" "$CACHE_WORKTREE_MAIN_ROOT/.cache"
-        echo "Cache initialization refused: managed worktree .cache is not a symlink."
+        echo "Cache initialization refused: managed worktree cache is not shared."
         echo "  Worktree:       $CACHE_PROJECT_ROOT"
         echo "  Cache dir here: $CACHE_PROJECT_ROOT/.cache"
-        echo "  Expected:       .cache -> $CACHE_WORKTREE_MAIN_ROOT/.cache (WORKTREE_SYMLINKS-managed symlink)"
+        echo "  Expected:       shared $CACHE_WORKTREE_MAIN_ROOT/.cache/linear"
         echo "  Creating or using a local cache would hide requests from the shared journal"
         echo "  and let a full sync re-pull Linear history. Create the main checkout's .cache"
-        echo "  if absent, then repair the link from the main checkout and retry:"
+        echo "  if absent, then repair worktree links from the main checkout and retry:"
         echo "    cd '$CACHE_WORKTREE_MAIN_ROOT' && $(cache_worktree_repair_script) fix-links '$CACHE_PROJECT_ROOT'"
     } >&2
 }

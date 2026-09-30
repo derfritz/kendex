@@ -1,1 +1,1 @@
-- Fleet watches reject incomplete Linear lists. Requests refuse broken managed cache links before sending, so worktree-local journals cannot hide quota use.
+- Fleet watches reject incomplete Linear lists. Requests refuse isolated managed caches, while shared caches, explicit local caches and cache redirects remain usable.

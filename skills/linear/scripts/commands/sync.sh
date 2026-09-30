@@ -617,18 +617,10 @@ main() {
         esac
     done
 
-    # Fail-closed budget guard: when the cache dir is a
-    # missing or materialized managed worktree directory, refuse before the lock
-    # or the API. Gated to syncs that would go full (--full, or no meta.json —
-    # exactly what a freshly re-materialized empty dir looks like) or
-    # reconciling (--reconcile). A bare sync on a healthy checkout never
-    # enters this branch: there `.cache` is either the intact symlink or the
-    # main checkout's own real directory.
+    # Cache ownership must hold before the lock can create directories.
     if cache_worktree_cache_clobbered; then
-        if [[ "$full" == true || ! -f "$CACHE_DIR/meta.json" || "$force_reconcile" == true ]]; then
-            cache_worktree_clobber_refusal
-            return 1
-        fi
+        cache_worktree_clobber_refusal
+        return 1
     fi
 
     # Check if sync needed when --if-stale specified
