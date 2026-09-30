@@ -26,6 +26,8 @@ You configure the API key and target team. A sync downloads Linear data into the
 
 `linear.sh usage` reads `.cache/linear/requests.jsonl` without an API call. It reports a trailing hour and the observed journal age. Each retry adds a request. Equal shares divide the budget across caller identities seen in that hour. The command rows show each resource and action. API answers read only the active-hour snapshot in `.cache/linear/requests-active.json`. This snapshot starts with the first request when it is absent. The durable journal keeps older requests for reports and lane archives. The request function warns on an exceeded share or low server Remaining. A warning does not block a request. Rate-limit errors include the server reset time in UTC epoch milliseconds; a missing header produces `null`.
 
+Requests refuse a missing or replaced managed worktree cache link before contacting Linear. Repair the link named in the error to keep request counts in the shared journal. Explicit local-cache configuration and `LINEAR_CACHE_ROOT` redirects still apply.
+
 [Linear documents](https://linear.app/developers/rate-limiting) that API keys for the same authenticated user share one request quota. Repositories using that user must divide one budget between them. Set `LINEAR_HOURLY_BUDGET` to each repository's allocation. Journals measure only requests made through this skill and cache root. They cannot identify another repository's traffic or establish its user identity. Remaining is the server's shared balance, not a local count.
 
 Run `sync --reconcile` once at lane preflight. Round refreshes use `sync --if-stale 15`. Incremental sync does not reconcile deletions made outside the CLI.

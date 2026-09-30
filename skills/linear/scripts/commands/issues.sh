@@ -63,6 +63,7 @@ List Options:
   --created-since <Nd>  Filter by created date
   --limit <n>           Max results per page (default: 75)
   --max                 Fetch ALL results (auto-paginates, up to 15000)
+  --require-complete    Paginate all results; refuse if more remain at the safety cap
   --search <terms>      Filter by title/description substring, server-side and
                         case-insensitive; pipe-separated terms are OR'd.
                         Not a regex (the cache's --search is; see cache --help)
@@ -344,6 +345,7 @@ read_description_file() {
 list_issues() {
     local with_relations="false"
     local paginate_all="false"
+    local require_complete="false"
     local search_pattern=""
     local search_given="false"
     local args=()
@@ -356,6 +358,10 @@ list_issues() {
             ;;
         --max)
             paginate_all="true"
+            ;;
+        --require-complete)
+            paginate_all="true"
+            require_complete="true"
             ;;
         --format)
             # A following option token is a missing value, not a format:
@@ -471,27 +477,32 @@ list_issues() {
         # Pagination mode: fetch all pages
         while true; do
             local variables="{\"filter\": $FILTER_JSON, \"first\": $FIRST_JSON, \"includeArchived\": $INCLUDE_ARCHIVED_JSON, \"after\": $cursor}"
-            result=$(graphql_query "$query" "$variables")
+            result=$(graphql_query "$query" "$variables") || return 1
 
             # Extract nodes and merge
             local nodes
-            nodes=$(echo "$result" | jq '.issues.nodes')
-            all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add')
+            nodes=$(echo "$result" | jq '.issues.nodes') || return 1
+            all_nodes=$(echo "$all_nodes" "$nodes" | jq -s 'add') || return 1
 
             # Check for next page
             local has_next
-            has_next=$(echo "$result" | jq -r '.issues.pageInfo.hasNextPage')
+            has_next=$(echo "$result" | jq -r '.issues.pageInfo.hasNextPage') || return 1
 
             page_count=$((page_count + 1))
 
             if [ "$has_next" = "true" ] && [ $page_count -ge $max_pages ]; then
+                # The watch stores successful lists as complete team snapshots.
+                if [ "$require_complete" = "true" ]; then
+                    printf 'issues-list-incomplete: pages=%s cap=%s\n' "$page_count" "$max_pages" >&2
+                    return 1
+                fi
                 echo "⚠️  --max stopped at the $max_pages-page safety cap with more pages remaining — results are truncated." >&2
             fi
             if [ "$has_next" != "true" ] || [ $page_count -ge $max_pages ]; then
                 break
             fi
 
-            cursor=$(echo "$result" | jq '.issues.pageInfo.endCursor')
+            cursor=$(echo "$result" | jq '.issues.pageInfo.endCursor') || return 1
         done
 
         # Reconstruct result structure with all nodes

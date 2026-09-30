@@ -154,7 +154,7 @@ echo "=== oversee-watch owed items ==="
 world owed
 watch_pass -- --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC first=$(head -1 <<<"$OUT")" "rc=0 first=$HEARTBEAT" "the fleet reaches the heartbeat" "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --max --format=safe" \
+assert_eq "$(cat "$STUB_DIR/tracker.args")" "issues list --team kendex --max --require-complete --format=safe" \
   "the owed items use one complete team read shared with triage" "$ERR"
 while IFS='|' read -r item want; do
   assert_eq "$(owed "$item")" "$want" "owed $item" "$ERR"

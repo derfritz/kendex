@@ -173,3 +173,55 @@ assert "a trimmed alternation still produces four or-clauses" \
 log8="$TMP_ROOT/format-space.jsonl"
 out8="$(run_list "$log8" --format raw --search market_data)"
 assert_jq "a space-separated --format raw produces raw JSON output" "$out8" '.issues.nodes'
+
+# Linear emits hasNextPage=true at the safety cap for large teams. Drive the
+# real list producer with pages, without request-journal work on each page.
+while read -r mode strict want_rc want_rows; do
+  echo 0 >"$TMP_ROOT/page-count"
+  run_output page_out page_rc env -i PATH="$PATH" HOME="$TMP_ROOT" \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_CACHE_ROOT="$TMP_ROOT" \
+    STUB_MODE="$mode" PAGE_COUNT="$TMP_ROOT/page-count" \
+    bash -c '
+      source "$1"
+      graphql_query() {
+        local n has_next=true nodes
+        n="$(cat "$PAGE_COUNT")" || return 1
+        n=$(( n + 1 ))
+        echo "$n" >"$PAGE_COUNT"
+        if [[ "$STUB_MODE" == empty || ( "$STUB_MODE" == terminal && "$n" -eq 200 ) ]]; then
+          has_next=false
+        fi
+        nodes="[{\"identifier\":\"T-$n\"}]"
+        [[ "$STUB_MODE" != empty ]] || nodes="[]"
+        printf "{\"issues\":{\"pageInfo\":{\"hasNextPage\":%s,\"endCursor\":\"c%s\"},\"nodes\":%s}}" "$has_next" "$n" "$nodes"
+      }
+      if [[ "$2" == strict ]]; then
+        list_issues --require-complete --format=raw
+      else
+        list_issues --max --format=raw
+      fi
+    ' bash "$SKILL_DIR/scripts/commands/issues.sh" "$strict" 2>"$TMP_ROOT/page.err"
+  assert_eq "$strict $mode listing status" "$page_rc" "$want_rc"
+  if [[ "$want_rc" == 0 ]]; then
+    assert_jq "$strict $mode listing returns fetched rows" "$page_out" ".issues.nodes | length == $want_rows"
+  else
+    assert_eq 'strict capped listing emits no partial rows' "$page_out" ''
+    assert_file_contains 'strict capped listing names its completeness refusal' "$TMP_ROOT/page.err" \
+      'issues-list-incomplete: pages=200 cap=200'
+  fi
+  if [[ "$mode" == empty ]]; then
+    assert_eq 'strict empty listing uses one terminal page' "$(cat "$TMP_ROOT/page-count")" 1
+  else
+    assert_eq "$strict $mode listing reaches the safety cap" "$(cat "$TMP_ROOT/page-count")" 200
+  fi
+  if [[ "$mode" == terminal || "$mode" == empty ]]; then
+    assert_eq "$strict $mode listing has no truncation warning" "$(cat "$TMP_ROOT/page.err")" ''
+  elif [[ "$strict" == ordinary ]]; then
+    assert_file_contains 'ordinary capped listing retains its truncation warning' "$TMP_ROOT/page.err" 'results are truncated'
+  fi
+done <<'CASES'
+ordinary capped 0 200
+strict capped 1 0
+strict terminal 0 200
+strict empty 0 0
+CASES

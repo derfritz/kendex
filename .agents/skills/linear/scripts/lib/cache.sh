@@ -86,11 +86,12 @@ CACHE_COMMENTS_LOCK="$CACHE_DIR/.comments.lock"
 # cache dir then looks exactly like a cold cache, and a full re-sync silently
 # re-pulls the entire issue/comment history into the worktree-local dir —
 # burning a large slice of the shared Linear API budget. These helpers detect
-# that state so sync can fail closed instead.
+# that state before sync or request journaling creates a local cache.
 
-# True when the resolved cache root is a linked worktree whose `.cache` is a
-# real directory while the main checkout's `.cache` exists — the symlink
-# convention is configured but broken here. When WORKTREE_SYMLINKS is set
+# True when the resolved cache root is a linked worktree whose `.cache` is
+# missing or not a symlink: directory creation would make writes local. The
+# main checkout may also lack `.cache` when worktree setup skipped the link.
+# When WORKTREE_SYMLINKS is set
 # (loaded from project config by common.sh) and does NOT manage `.cache`, the
 # repo has explicitly opted its worktrees into local caches and the guard
 # stands down. Sets CACHE_WORKTREE_MAIN_ROOT for the refusal message.
@@ -99,15 +100,13 @@ cache_worktree_cache_clobbered() {
     local root="$CACHE_PROJECT_ROOT" common_dir="" main_root="" entry=""
     CACHE_WORKTREE_MAIN_ROOT=""
     [[ -n "$root" ]] || return 1
-    # Healthy states exit fast: `.cache` missing (a cold checkout) or a
-    # symlink (the convention is intact and writes reach the shared cache).
-    [[ -d "$root/.cache" && ! -L "$root/.cache" ]] || return 1
+    # An intact link routes writes to the shared cache, even on a cold checkout.
+    [[ ! -L "$root/.cache" ]] || return 1
     common_dir="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" || return 1
     [[ -n "$common_dir" ]] || return 1
     [[ "$common_dir" == /* ]] || common_dir="$root/$common_dir"
     main_root="$(linear_cache_canonical_existing_dir "$(dirname "$common_dir")")" || return 1
     [[ "$main_root" != "$root" ]] || return 1
-    [[ -e "$main_root/.cache" ]] || return 1
     if [[ -n "${WORKTREE_SYMLINKS:-}" ]]; then
         local manages_cache=false stripped=""
         for entry in ${WORKTREE_SYMLINKS}; do
@@ -128,15 +127,15 @@ cache_worktree_cache_clobbered() {
 
 cache_worktree_clobber_refusal() {
     {
-        printf 'Sync-refused: worktree=%s cache=%s expected=%s\n' \
+        printf 'Cache-refused: worktree=%s cache=%s expected=%s\n' \
             "$CACHE_PROJECT_ROOT" "$CACHE_PROJECT_ROOT/.cache" "$CACHE_WORKTREE_MAIN_ROOT/.cache"
-        echo "Sync refused: cache dir is a worktree-local real directory (kendex#1032)."
+        echo "Cache initialization refused: managed worktree .cache is not a symlink."
         echo "  Worktree:       $CACHE_PROJECT_ROOT"
-        echo "  Cache dir here: $CACHE_PROJECT_ROOT/.cache (real directory)"
+        echo "  Cache dir here: $CACHE_PROJECT_ROOT/.cache"
         echo "  Expected:       .cache -> $CACHE_WORKTREE_MAIN_ROOT/.cache (WORKTREE_SYMLINKS-managed symlink)"
-        echo "  A git operation re-materialized the symlink. Syncing here would re-pull the full"
-        echo "  Linear history into this worktree instead of the shared cache, silently burning"
-        echo "  the shared API budget. Repair the link from the main checkout, then re-run sync:"
+        echo "  Creating or using a local cache would hide requests from the shared journal"
+        echo "  and let a full sync re-pull Linear history. Create the main checkout's .cache"
+        echo "  if absent, then repair the link from the main checkout and retry:"
         echo "    cd '$CACHE_WORKTREE_MAIN_ROOT' && $(cache_worktree_repair_script) fix-links '$CACHE_PROJECT_ROOT'"
     } >&2
 }

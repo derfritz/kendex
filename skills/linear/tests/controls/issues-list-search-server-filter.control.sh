@@ -5,3 +5,8 @@ control_expect "padded terms are trimmed in the or-clause"
 control_replace scripts/commands/issues.sh 2 \
     '                | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))' \
     '                | map(.)'
+
+control_expect 'strict capped listing status'
+control_replace scripts/commands/issues.sh 1 \
+    '                if [ "$require_complete" = "true" ]; then' \
+    '                if [ "$require_complete" = "true" ] && false; then'

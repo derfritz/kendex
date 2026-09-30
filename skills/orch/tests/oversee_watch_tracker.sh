@@ -46,7 +46,7 @@ printf '[{"id":"FLEET-1","state":"In Review","priority":2,"created_at":"2026-08-
 tracker_pass LINEAR_TEAM=fleet
 assert_eq "$RC" 0 'a changed team succeeds on a fresh snapshot' "$ERR"
 assert_eq "$(wc -l <"$STUB_DIR/tracker.calls" | tr -d ' ')" 3 'a changed team makes one new live request' "$ERR"
-assert_eq "$(cat "$STUB_DIR/tracker.args")" 'issues list --team fleet --max --format=safe' \
+assert_eq "$(cat "$STUB_DIR/tracker.args")" 'issues list --team fleet --max --require-complete --format=safe' \
   'the new request selects the changed team' "$ERR"
 assert_contains "$OUT" 'EVENT triage FLEET-1' 'triage selects the new team results' "$ERR"
 printf '{"triaged":[{"issue":"FLEET-1","verdict":"kept"}]}\n' >"$STUB_DIR/oversee-state.json"
@@ -72,6 +72,29 @@ ERR="$STUB_DIR/invalid.err"
 OUT="$(run_watch ORCH_WATCH_TRACKER_INTERVAL=0 -- --max-loops 1 2>"$ERR")" && RC=0 || RC=$?
 assert_eq "$RC" 2 'zero tracker interval is refused' "$ERR"
 assert_contains "$(cat "$ERR")" 'tracker-interval-invalid' 'invalid interval names its setting' "$ERR"
+
+world tracker_incomplete
+tracker_pass
+SNAPSHOT="$(cat "$CASE_REPO_ROOT/.cache/linear/watch-team.json")"
+printf '1786960801\n' >"$STUB_DIR/now.epoch"
+printf '1\n' >"$STUB_DIR/tracker.rc"
+printf 'issues-list-incomplete: pages=200 cap=200\n' >"$STUB_DIR/tracker.err"
+tracker_pass
+assert_eq "$RC" 2 'incomplete live listing refuses the watch pass' "$ERR"
+assert_contains "$(cat "$ERR")" 'tracker-list-failed' 'the watch exposes the failed list' "$ERR"
+assert_not_contains "$OUT" 'EVENT triage' 'incomplete listing produces no triage event' "$ERR"
+assert_eq "$(cat "$CASE_REPO_ROOT/.cache/linear/watch-team.json")" "$SNAPSHOT" \
+  'incomplete listing preserves the prior complete snapshot' "$ERR"
+
+# Must-fail: remove only the strict listing option. The argv contract then
+# permits the producer's successful partial result again.
+MUTANT="$(mutant_scripts tracker-complete-mutant/orch lib/watch-tracker.sh)/oversee-watch"
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-complete-mutant/github"
+mutate_file "${MUTANT%/*}/lib/watch-tracker.sh" '--max --require-complete --format=safe' '--max --format=safe'
+world tracker_complete_control
+WATCH_BIN="$MUTANT" tracker_pass LINEAR_TEAM=fleet
+assert_eq "$(cat "$STUB_DIR/tracker.args")" 'issues list --team fleet --max --format=safe' \
+  'control: removing completeness makes the strict argv pin red' "$ERR"
 
 # Must-fail: keep the snapshot read but disable its age branch. The same
 # repeated pass now makes a live request instead of satisfying the count pin.

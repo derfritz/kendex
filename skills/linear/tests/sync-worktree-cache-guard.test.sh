@@ -105,7 +105,7 @@ err="$(run_sync "$GUARD_ROOT/wt" 2>&1 >/dev/null)" || rc=$?
 
 assert_ne "sync into a clobbered worktree cache is refused" "$rc" 0
 assert_contains "the refusal key names the worktree cache and expected cache" "$err" \
-  "Sync-refused: worktree=$GUARD_ROOT/wt cache=$GUARD_ROOT/wt/.cache expected=$(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
+  "Cache-refused: worktree=$GUARD_ROOT/wt cache=$GUARD_ROOT/wt/.cache expected=$(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
 assert_not "no API call happens before the refusal" test -s "$CURL_LOG"
 assert_not "the refused sync created no worktree-local cache dir" \
   test -e "$GUARD_ROOT/wt/.cache/linear"
@@ -116,7 +116,7 @@ err_full="$(run_sync "$GUARD_ROOT/wt" --full 2>&1 >/dev/null)" || rc_full=$?
 
 assert_ne "--full is refused too" "$rc_full" 0
 assert_contains "the --full refusal has the same key and values" "$err_full" \
-  "Sync-refused: worktree=$GUARD_ROOT/wt cache=$GUARD_ROOT/wt/.cache expected=$(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
+  "Cache-refused: worktree=$GUARD_ROOT/wt cache=$GUARD_ROOT/wt/.cache expected=$(cd "$GUARD_ROOT/main" && pwd -P)/.cache"
 
 # --- control: bare sync on the healthy main checkout ---------------------------
 : >"$CURL_LOG"
@@ -155,7 +155,7 @@ err_slash="$(run_sync "$SLASH_ROOT/wt" 2>&1 >/dev/null)" || rc_slash=$?
 
 assert_ne "'.cache//' is refused: the normalizer strips trailing slashes" "$rc_slash" 0
 assert_contains "the '.cache//' refusal has the stable key" "$err_slash" \
-  "Sync-refused: worktree=$SLASH_ROOT/wt cache=$SLASH_ROOT/wt/.cache expected=$(cd "$SLASH_ROOT/main" && pwd -P)/.cache"
+  "Cache-refused: worktree=$SLASH_ROOT/wt cache=$SLASH_ROOT/wt/.cache expected=$(cd "$SLASH_ROOT/main" && pwd -P)/.cache"
 
 # --- no worktree config at all: the issue's bare prescription still refuses ----
 BARE_ROOT="$TMP_BASE/bare"
@@ -165,4 +165,4 @@ err_bare="$(run_sync "$BARE_ROOT/wt" 2>&1 >/dev/null)" || rc_bare=$?
 
 assert_ne "an unconfigured repo with a main .cache still refuses" "$rc_bare" 0
 assert_contains "the unconfigured refusal has the stable key" "$err_bare" \
-  "Sync-refused: worktree=$BARE_ROOT/wt cache=$BARE_ROOT/wt/.cache expected=$(cd "$BARE_ROOT/main" && pwd -P)/.cache"
+  "Cache-refused: worktree=$BARE_ROOT/wt cache=$BARE_ROOT/wt/.cache expected=$(cd "$BARE_ROOT/main" && pwd -P)/.cache"

@@ -4,6 +4,10 @@
 
 linear_usage_init() {
     source "$_LIB_DIR/cache.sh" || return 1
+    if cache_worktree_cache_clobbered; then
+        cache_worktree_clobber_refusal
+        return 1
+    fi
     LINEAR_HOURLY_BUDGET="${LINEAR_HOURLY_BUDGET:-}"
     if [[ -n "$LINEAR_HOURLY_BUDGET" ]] && ! [[ "$LINEAR_HOURLY_BUDGET" =~ ^[1-9][0-9]{0,8}$ ]]; then
         printf 'linear-budget: invalid=%s setting=LINEAR_HOURLY_BUDGET\n' "$LINEAR_HOURLY_BUDGET" >&2

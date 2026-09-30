@@ -36,6 +36,7 @@ SH
 cat >"$ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'called\n' >>"$TEST_CURL_LOG"
 cat >/dev/null
 headers="" fmt=""
 while [[ $# -gt 0 ]]; do
@@ -52,10 +53,13 @@ SH
 chmod +x "$ROOT/bin/date" "$ROOT/bin/curl" "$ROOT/bin/jq"
 run() {
   local now="$1" status="$2" remaining="$3" budget="$4"; shift 4
-  (cd -- "$ROOT" && env -i PATH="$ROOT/bin:$PATH" HOME="$TMP_ROOT" \
+  local cache_args=()
+  [[ "${TEST_CACHE_ROOT:-default}" == none ]] || cache_args=("LINEAR_CACHE_ROOT=${TEST_CACHE_ROOT:-$ROOT}")
+  (cd -- "${TEST_ROOT:-$ROOT}" && env -i PATH="$ROOT/bin:$PATH" HOME="$TMP_ROOT" \
     REAL_DATE="$REAL_DATE" REAL_JQ="$REAL_JQ" TEST_JQ_READS="$ROOT/jq-reads" \
     TEST_NOW="$now" TEST_STATUS="$status" TEST_REMAINING="$remaining" \
-    LINEAR_API_KEY_OVERRIDE=fixture LINEAR_TEAM=fixture LINEAR_CACHE_ROOT="$ROOT" \
+    LINEAR_API_KEY_OVERRIDE=fixture LINEAR_TEAM=fixture TEST_CURL_LOG="$ROOT/curl-log" \
+    "${cache_args[@]}" \
     LINEAR_RETRY_BASE_DELAY=0 LINEAR_HOURLY_BUDGET="$budget" LINEAR_USAGE_CALLER="${TEST_CALLER:-}" \
     "$ROOT/.agents/skills/linear/scripts/linear.sh" "$@" 2>&1)
 }
@@ -166,3 +170,53 @@ done
 printf 'invalid-json\n' >"$JOURNAL"
 run_output out rc run 13601 200 10 '' usage
 assert_ne 'corrupt journal refuses instead of an empty rollup' "$rc" 0
+
+# Git materializes tracked .cache/.gitkeep in a linked worktree. Worktree
+# setup can also omit the link when its main-checkout source is absent.
+MANAGED="$TMP_ROOT/managed"
+mkdir -p "$MANAGED/main/.cache"
+git -C "$MANAGED/main" init -q -b main
+git -C "$MANAGED/main" config gc.auto 0
+git -C "$MANAGED/main" config maintenance.auto false
+printf '[env]\nWORKTREE_SYMLINKS = ".cache//"\n' >"$MANAGED/main/kendex.settings.toml"
+touch "$MANAGED/main/.cache/.gitkeep"
+git -C "$MANAGED/main" add .cache/.gitkeep kendex.settings.toml
+git -C "$MANAGED/main" -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false commit -qm base
+git -C "$MANAGED/main" worktree add -qb lane "$MANAGED/ken-2270"
+TEST_ROOT="$MANAGED/ken-2270"
+TEST_CACHE_ROOT=none
+while read -r state main_cache; do
+  rm -rf -- "$TEST_ROOT/.cache" "$MANAGED/main/.cache"
+  [[ "$state" != materialized ]] || mkdir -p "$TEST_ROOT/.cache"
+  [[ "$main_cache" != present ]] || mkdir -p "$MANAGED/main/.cache"
+  : >"$ROOT/curl-log"
+  run_output out rc run 24000 200 11 '' users me
+  assert_ne "managed $state cache with $main_cache main cache refuses usage initialization" "$rc" 0
+  assert_contains "managed $state cache delegates the refusal" "$out" 'Cache-refused:'
+  assert_not "managed $state cache refuses before curl" test -s "$ROOT/curl-log"
+  assert_not "managed $state cache creates no local journal directory" test -e "$TEST_ROOT/.cache/linear"
+done <<'CASES'
+materialized present
+materialized missing
+missing present
+missing missing
+CASES
+
+mkdir -p "$MANAGED/main/.cache"
+ln -s "$MANAGED/main/.cache" "$TEST_ROOT/.cache"
+run_output out rc run 24000 200 11 '' users me
+assert_eq 'intact worktree link permits request journaling' "$rc" 0
+assert_jq 'worktree link journals in the shared main cache' "$(jq -s . "$MANAGED/main/.cache/linear/requests.jsonl")" \
+  'length == 1 and .[0].lane_item == "KEN-2270"'
+rm -- "$TEST_ROOT/.cache"
+printf '[env]\nWORKTREE_SYMLINKS = "tmp"\n' >"$TEST_ROOT/kendex.settings.toml"
+run_output out rc run 24000 200 11 '' users me
+assert_eq 'explicit cache opt-out permits local request journaling' "$rc" 0
+assert 'explicit cache opt-out creates its local journal' test -s "$TEST_ROOT/.cache/linear/requests.jsonl"
+
+printf '[env]\nWORKTREE_SYMLINKS = ".cache"\n' >"$TEST_ROOT/kendex.settings.toml"
+TEST_CACHE_ROOT="$MANAGED/main"
+run_output out rc run 24001 200 11 '' users me
+assert_eq 'cache redirect bypasses the broken caller worktree link' "$rc" 0
+assert_jq 'cache redirect journals in the selected main cache' "$(jq -s . "$MANAGED/main/.cache/linear/requests.jsonl")" \
+  'length == 2 and .[1].lane_item == "KEN-2270"'

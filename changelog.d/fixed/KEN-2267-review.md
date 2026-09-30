@@ -1,0 +1,1 @@
+- Fleet watches reject incomplete Linear lists. Requests refuse broken managed cache links before sending, so worktree-local journals cannot hide quota use.

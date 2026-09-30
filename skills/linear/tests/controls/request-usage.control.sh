@@ -54,3 +54,18 @@ control_expect 'journal records raw complexity reset'
 control_replace scripts/lib/usage.sh 1 \
   '       complexity_reset: number("x-ratelimit-complexity-reset")}'\'' "$1"' \
   '       complexity_reset: (number("x-ratelimit-complexity-reset") | null)}'\'' "$1"'
+
+control_expect 'managed materialized cache with present main cache refuses usage initialization'
+control_replace scripts/lib/usage.sh 1 \
+  '    if cache_worktree_cache_clobbered; then' \
+  '    if cache_worktree_cache_clobbered && false; then'
+
+control_expect 'managed missing cache with present main cache refuses usage initialization'
+control_replace scripts/lib/cache.sh 1 \
+  '    [[ ! -L "$root/.cache" ]] || return 1' \
+  '    [[ -d "$root/.cache" && ! -L "$root/.cache" ]] || return 1'
+
+control_expect 'managed missing cache with missing main cache refuses usage initialization'
+control_replace scripts/lib/cache.sh 1 \
+  '    [[ "$main_root" != "$root" ]] || return 1' \
+  '    [[ "$main_root" != "$root" && -e "$main_root/.cache" ]] || return 1'

@@ -618,7 +618,7 @@ main() {
     done
 
     # Fail-closed budget guard: when the cache dir is a
-    # clobbered worktree-local real directory, refuse before touching the lock
+    # missing or materialized managed worktree directory, refuse before the lock
     # or the API. Gated to syncs that would go full (--full, or no meta.json —
     # exactly what a freshly re-materialized empty dir looks like) or
     # reconciling (--reconcile). A bare sync on a healthy checkout never

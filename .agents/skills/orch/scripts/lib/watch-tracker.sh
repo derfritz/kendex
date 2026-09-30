@@ -17,7 +17,7 @@ watch_tracker_list() (
       return 0
     fi
   fi
-  out="$(env LINEAR_USAGE_CALLER=overseer "$TRACKER" issues list --team "$LINEAR_TEAM" --max --format=safe 2>"$errf")" || rc=$?
+  out="$(env LINEAR_USAGE_CALLER=overseer "$TRACKER" issues list --team "$LINEAR_TEAM" --max --require-complete --format=safe 2>"$errf")" || rc=$?
   [[ "$rc" -eq 0 ]] || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
   [[ ! -s "$errf" ]] || cat -- "$errf" >&2
   jq -e 'if type != "array" then error("tracker-type expected=array actual=\(type)") else true end' <<<"$out" >/dev/null 2>"$errf" \
