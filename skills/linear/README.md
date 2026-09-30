@@ -8,18 +8,27 @@ A shell CLI for Linear issues, projects and planning data. It includes a local c
 kendex add vanillagreencom/kendex --skill linear
 ```
 
-Requires Bash 4.0 or newer, curl and jq. Set `LINEAR_API_KEY` and `LINEAR_TEAM` in the kendex app, on this package's Customize tab: the key goes to the project's private env file and the team to `kendex.settings.toml`. Both can be set by hand instead. Run the installed `scripts/linear.sh auth-check --strict`, then `scripts/linear.sh sync --reconcile`.
+Requires Bash 4.0 or newer, curl, jq and flock. Set `LINEAR_API_KEY` and `LINEAR_TEAM` in the kendex app, on this package's Customize tab: the key goes to the project's private env file and the team to `kendex.settings.toml`. Both can be set by hand instead. Run the installed `scripts/linear.sh auth-check --strict`, then `scripts/linear.sh sync --reconcile`.
 
 ## Features
 
 - Read and change issues, projects, comments and planning data.
 - Refresh a local cache for repeated reads.
+- Report request counts by caller and warn when a caller exceeds its hourly share.
 - Upload and download attachments.
 - Check configured issue requirements during creation and completion.
 
 ## How it works
 
 You configure the API key and target team. A sync downloads Linear data into the project's local cache. Cache commands read that saved data. Write commands send changes to Linear and update the cache.
+
+## Request usage
+
+`linear.sh usage` reads `.cache/linear/requests.jsonl` without an API call. It reports a trailing hour and the observed journal age. Each retry adds a request. Equal shares divide the budget across caller identities seen in that hour. The command rows show each resource and action. The request function warns on an exceeded share or low server Remaining. A warning does not block a request. Rate-limit errors include the server reset time in UTC epoch milliseconds; a missing header produces `null`.
+
+[Linear documents](https://linear.app/developers/rate-limiting) that API keys for the same authenticated user share one request quota. Repositories using that user must divide one budget between them. Set `LINEAR_HOURLY_BUDGET` to each repository's allocation. Journals measure only requests made through this skill and cache root. They cannot identify another repository's traffic or establish its user identity. Remaining is the server's shared balance, not a local count.
+
+Run `sync --reconcile` once at lane preflight. Round refreshes use `sync --if-stale 15`. Incremental sync does not reconcile deletions made outside the CLI.
 
 ## Settings
 
@@ -34,6 +43,7 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_REQUIRE_REACH` | Non-empty enforces the `Reached by:` and `Symptom:` lines at create |
 | `LINEAR_FORMAT` | Default read format: `safe`, `table`, `ids`, `raw` |
 | `LINEAR_RETRY_BASE_DELAY` | Seconds before the first retry of a failed call, doubling after |
+| `LINEAR_HOURLY_BUDGET` | Repository hourly request allocation; empty uses the reported request limit |
 | `LINEAR_CACHE_ROOT` | Overrides the cache root for one invocation; refused if it names no directory |
 | `KENDEX_USER_EMAIL` | Your email address, in the project's private env file; `issues activate` assigns an unassigned issue to the Linear user with that address |
 

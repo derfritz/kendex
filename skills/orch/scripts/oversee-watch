@@ -213,6 +213,9 @@ source "$SCRIPT_DIR/lib/watch-pid.sh"
 source "$SCRIPT_DIR/lib/mailbox-append.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
+source "$SCRIPT_DIR/lib/watch-tracker.sh"
+TRACKER_INTERVAL="${ORCH_WATCH_TRACKER_INTERVAL:-3600}"
+[[ "$TRACKER_INTERVAL" =~ ^[1-9][0-9]{0,8}$ ]] || die tracker-interval-invalid "" "value=$TRACKER_INTERVAL"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 LANE_MAIL="${OVERSEE_WATCH_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
 LANE_CLOSE="${OVERSEE_WATCH_LANE_CLOSE:-$SCRIPT_DIR/lane-close}"
@@ -1379,7 +1382,7 @@ parked_merged_owed() { # STATE
 
 check_triage() {
   [[ "$TRIAGE_ENABLED" -eq 1 ]] || return 0
-  local errf="$WORK_DIR/triage.err" now age days out ids verdicts pr_keys triage_keys="" seen id new_ids="" next rc=0
+  local errf="$WORK_DIR/triage.err" out ids verdicts pr_keys triage_keys="" seen id new_ids="" next rc=0
   verdicts="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} get oversee '.triaged // [] | map(select(.verdict == "kept" or .verdict == "canceled") | .issue) | .[]' 2>"$errf")" || rc=$?
   [[ "$rc" -eq 0 ]] \
     || die triage-state-failed "$(cat "$errf")" "exit=$rc"
@@ -1402,15 +1405,7 @@ check_triage() {
     pw_commit_state "$(pw_state_file "${REPOS[0]}")"
     PW_SEEN[0]="$next"
   fi
-  now="$(date -u +%s)" || die time-failed "" "clock=UTC"
-  age=$((now - SINCE_EPOCH))
-  [[ "$age" -ge 0 ]] || age=0
-  # Linear's live list accepts whole-day windows. Round up, then apply the
-  # exact ISO floor below so the wider server query cannot mint an old event.
-  days=$((age / 86400 + 1))
-  out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --created-since "${days}d" --max --format=safe 2>"$errf")" || rc=$?
-  [[ "$rc" -eq 0 ]] \
-    || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
+  out="$(watch_tracker_list)" || return $?
   ids="$(jq -r --argjson since "$SINCE_EPOCH" '
     def created_epoch: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
     if type != "array" then error("tracker-type expected=array actual=\(type)") else . end
@@ -3557,13 +3552,11 @@ owed_read() {
   OWED_ACCOUNTS=""
   OWED_ANSWERS=""
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
-    out="$("$TRACKER" issues list --team "$LINEAR_TEAM" --state "In Progress,In Review" --max --format=safe 2>"$errf")" || rc=$?
-    [[ "$rc" -eq 0 ]] \
-      || die tracker-list-failed "$(cat "$errf")" "team=$LINEAR_TEAM" "exit=$rc"
+    out="$(watch_tracker_list)" || return $?
     # Linear's priority 0 is No priority, which ranks after Low: it prints `-`.
     items="$(jq -c '
       if type != "array" then error("tracker-type expected=array actual=\(type)") else . end
-      | map(
+      | map(select(.state == "In Progress" or .state == "In Review") |
           if ((.id? | type) == "string" and (.id | test("^[A-Za-z0-9._-]+$"))) then .
           else error("tracker-field field=id value=\(.id | tojson)") end
           | {id, priority: (if .priority == null or .priority == 0 then "-" else .priority end),

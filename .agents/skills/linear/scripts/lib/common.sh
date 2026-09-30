@@ -161,6 +161,11 @@ LINEAR_TEAM_TARGET="$DEFAULT_TEAM"
 # Source formatters
 source "$_LIB_DIR/formatters.sh"
 
+# Direct command invocations use the same attribution as the dispatcher.
+LINEAR_USAGE_RESOURCE="${LINEAR_USAGE_RESOURCE:-$(basename "$0" .sh)}"
+LINEAR_USAGE_ACTION="${LINEAR_USAGE_ACTION:-${1:-request}}"
+source "$_LIB_DIR/usage.sh"
+
 # Resolve 1Password references when the env file contains op:// secrets.
 resolve_linear_api_key() {
     local token="${LINEAR_API_KEY:-}"
@@ -254,7 +259,7 @@ linear_query_is_mutation() {
 
 # Make GraphQL request with error handling and retry
 # Usage: graphql_query "query string" '{"var": "value"}'
-graphql_query() {
+graphql_query() (
     local query="$1"
     local variables="$2"
     if [ -z "$variables" ]; then
@@ -271,6 +276,10 @@ graphql_query() {
     fi
 
     check_api_key
+    linear_usage_init || return 1
+    local headers_file headers
+    headers_file="$(mktemp "$CACHE_DIR/.headers.XXXXXX")" || return 1
+    trap 'rm -f -- "$headers_file"' EXIT
 
     while [ $attempt -le $max_retries ]; do
         local response
@@ -281,6 +290,7 @@ graphql_query() {
         # This handles JSON with literal newlines in string values
         local delimiter="___HTTP_CODE___"
         local raw_output
+        : >"$headers_file" || return 1
         if ! payload=$(jq -cn --arg query "$(echo "$query" | tr '\n' ' ')" --argjson variables "$variables" \
             '{query: $query, variables: $variables}'); then
             echo '{"error": "Invalid GraphQL variables JSON"}' >&2
@@ -294,20 +304,22 @@ graphql_query() {
                 "header = $(curl_config_quote "Content-Type: application/json")" \
                 "header = $(curl_config_quote "Authorization: $LINEAR_API_KEY")" \
                 "data = $(curl_config_quote "$payload")" \
-            | curl -s -w "${delimiter}%{http_code}" -K -
+            | curl -s -D "$headers_file" -w "${delimiter}%{http_code}" -K -
         ); then
             raw_output="${delimiter}000"
         fi
 
         http_code="${raw_output##*${delimiter}}"
         response="${raw_output%${delimiter}*}"
+        headers="$(linear_usage_headers "$headers_file")" || return 1
+        linear_usage_record "$headers" "$http_code" || return 1
 
         # Linear emits rate-limit rejections with an OUTER HTTP 400 (the body
         # carries extensions.code RATELIMITED / extensions.statusCode 429), so
         # normalize on the body marker: without this they fall into the
         # generic branch and surface as "HTTP error: 400" — and callers like
         # resolve_team_id then compound it into "Team not found".
-        if [ "$http_code" != "200" ] && echo "$response" | jq -e \
+        if echo "$response" | jq -e \
             '[.errors[]? | select(.extensions.code == "RATELIMITED")] | length > 0' >/dev/null 2>&1; then
             http_code=429
         fi
@@ -359,7 +371,9 @@ graphql_query() {
                 attempt=$((attempt + 1))
                 continue
             fi
-            echo '{"error": "Rate limited. Try again later."}' >&2
+            jq -cn --argjson headers "$headers" \
+                '{error: "Rate limited. Try again later.", reset: $headers.reset,
+                  endpoint_reset: $headers.endpoint_reset, complexity_reset: $headers.complexity_reset}' >&2
             return 1
             ;;
         *)
@@ -383,7 +397,7 @@ graphql_query() {
             ;;
         esac
     done
-}
+)
 
 # Reject a value before it reaches a spot that cannot defend itself: an unquoted
 # splice into a JSON payload, a jq program, or a shell arithmetic context. Each

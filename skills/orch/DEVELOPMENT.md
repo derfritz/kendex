@@ -4,6 +4,8 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent contract: [SK
 
 ## Tests
 
+`tests/oversee_watch_tracker.sh` holds the shared live-list interval for triage and owed reads. It uses a clock fixture, so the hour boundary needs no wait. `tests/lib/lane-host-ssh-tests.py::test_close_archives_before_delete` holds request-journal preservation, including a worktree whose cache is a symlink.
+
 ```bash
 bash skills/orch/tests/run-all.sh
 bash skills/orch/tests/run-all.sh workflow_helpers   # subset by name fragment

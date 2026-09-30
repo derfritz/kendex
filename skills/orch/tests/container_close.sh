@@ -8,6 +8,7 @@ TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 SANDBOX="$TMP_ROOT/repo"
 mkdir -p "$SANDBOX/skills/orch/scripts" "$SANDBOX/skills/linear/scripts" "$TMP_ROOT/bin"
@@ -139,7 +140,17 @@ reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Todo","state_type":"unstarted"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"
 out="$(run_close)"
 assert_eq "$out" "deferred CHILD-2" "pending child defers closure and is named"
+assert_eq "$(grep -c '^sync:' "$FAKE_LINEAR_ROOT/linear.calls")" 1 "pending-child read does not repeat reconciliation"
 [[ ! -e "$FAKE_LINEAR_ROOT/complete.calls" ]] && pass "pending child prevents parent mutation" || fail "pending child prevents parent mutation"
+
+RECONCILE_MUTANT="$SANDBOX/skills/orch/scripts/container-close-mutant"
+cp "$SCRIPT" "$RECONCILE_MUTANT"
+mutate_file "$RECONCILE_MUTANT" \
+  'PENDING="$("$LINEAR" cache issues children "$PARENT_ID" --recursive --pending --format=ids)"' \
+  $'sync_linear\nsync_linear\nPENDING="$( "$LINEAR" cache issues children "$PARENT_ID" --recursive --pending --format=ids)"'
+: >"$FAKE_LINEAR_ROOT/linear.calls"
+out="$(SCRIPT="$RECONCILE_MUTANT" run_close)"
+assert_eq "$(grep -c '^sync:' "$FAKE_LINEAR_ROOT/linear.calls")" 3 "control: repeated reconciliation breaks the single-read pin"
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-2","title":"two","state":"Canceled","state_type":"canceled"},{"id":"CHILD-3","title":"three","state":"Canceled","state_type":"canceled"},{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"

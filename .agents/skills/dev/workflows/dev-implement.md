@@ -14,7 +14,7 @@ Run `pwd -P` before the first repo-relative command; it must print the delegatio
 **A bundle needs an explicit single-PR marker.** A parent with children is a CONTAINER unless one of exactly three markers is present: `(one PR)` in its title, `Audit Bundle: yes` in the delegation, or a leaf issue carrying an internal checklist. The title marker outranks an `agent:multi` label. With none present, stop and report the mis-delegation. Check the marker against the delegation's `Parent Title:` line; when a bundled delegation omits that line, read the title first — never classify from labels and children alone:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
+.agents/skills/linear/scripts/linear.sh sync --if-stale 15
 .agents/skills/linear/scripts/linear.sh cache issues get [PARENT_ID]
 ```
 
@@ -41,10 +41,10 @@ git -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]
 
 Determine the tracker: `Issue:`/`Parent: ABC-123` → Linear; `GitHub Issue: OWNER/REPO#N` → GitHub; no reference → ad-hoc (delegation text is the source of truth; skip every tracker write).
 
-Linear only — activate the issue, or the parent alone if bundled (sub-issues activate individually in § 4):
+Linear only: the caller reconciles once at lane preflight. Each round uses an incremental freshness check, then activates the issue, or the parent alone if bundled (sub-issues activate individually in § 4):
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
+.agents/skills/linear/scripts/linear.sh sync --if-stale 15
 .agents/skills/linear/scripts/linear.sh issues activate [ISSUE_ID] --agent [AGENT_TYPE]
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]

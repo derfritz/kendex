@@ -501,7 +501,7 @@ suppression read apart. No other payload is filtered.
 
 The latest pr-watch attention lines close the block when any exist and the
 pr-watch event did not open it. Triage
-reads the live tracker list and rebuilds only acknowledged triage keys in the
+reads the interval-cached tracker list and rebuilds only acknowledged triage keys in the
 first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
 
@@ -762,6 +762,10 @@ Environment:
                               number, default 1800
   OVERSEE_WATCH_PR_WATCH      path to pr-watch.sh
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
+  ORCH_WATCH_TRACKER_INTERVAL seconds between complete live team lists; default
+                              3600, positive integer. Triage and owed reads share
+                              .cache/linear/watch-team.json between intervals.
+                              Live requests are attributed to overseer.
   OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state; with an --item a
                               missing one exits 2 rather than dropping handoff
   OVERSEE_WATCH_LANE_MAIL     path to lane-mail; a missing one exits 2 rather
@@ -858,6 +862,7 @@ ow_message() { # REASON FIELD=VALUE...
     state-directory-create-failed) text='The watch state directory could not be created. Check OVERSEE_WATCH_STATE_DIR.' ;;
     state-directory-unwritable) text='The watch state directory is not writable. Check OVERSEE_WATCH_STATE_DIR.' ;;
     interval-invalid) text='The interval must be a non-negative integer.' ;;
+    tracker-interval-invalid) text='ORCH_WATCH_TRACKER_INTERVAL takes positive whole seconds, with no leading zero and at most nine digits.' ;;
     handoff-invalid) text='The handoff path takes letters, digits and ./_- only, as oversee-succeed reads it.' ;;
     mail-interval-invalid) text='ORCH_WATCH_MAIL_INTERVAL takes a whole number of seconds, with no leading zero.' ;;
     start-stall-secs-invalid) text='ORCH_WATCH_START_STALL_SECS takes a positive whole number of seconds, with no leading zero.' ;;

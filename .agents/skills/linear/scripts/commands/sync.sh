@@ -24,7 +24,7 @@ Options:
 
 Notes:
   Reconciliation detects issues deleted/archived outside our tools (e.g., Linear web).
-  Runs automatically once per hour, or on --full/--reconcile.
+  Runs only on --full/--reconcile. Incremental sync does not scan all issue IDs.
   Our own archive/trash/delete commands update cache immediately (no sync needed).
 
 Examples:
@@ -462,22 +462,6 @@ sync_labels() {
 # This batch-checks all cached UUIDs against the API and removes stale entries.
 # =============================================================================
 
-# Check if reconciliation was done recently (< max_age_minutes)
-reconcile_is_fresh() {
-    local max_age_minutes="${1:-60}"
-    local meta="$CACHE_DIR/meta.json"
-    [[ -f "$meta" ]] || return 1
-    local last
-    last=$(jq -r '.reconciled_at // empty' "$meta")
-    [[ -n "$last" ]] || return 1
-    local last_epoch
-    last_epoch=$(date -d "$last" +%s 2>/dev/null || echo 0)
-    local now_epoch
-    now_epoch=$(date +%s)
-    local age_minutes=$(( (now_epoch - last_epoch) / 60 ))
-    (( age_minutes < max_age_minutes ))
-}
-
 # Returns count of removed issues on stdout
 reconcile_issues() {
     local cache_file="$CACHE_DIR/issues.json"
@@ -637,13 +621,11 @@ main() {
     # clobbered worktree-local real directory, refuse before touching the lock
     # or the API. Gated to syncs that would go full (--full, or no meta.json —
     # exactly what a freshly re-materialized empty dir looks like) or
-    # reconciling (--reconcile, or the hourly stamp is missing/stale, which in
-    # the clobbered dir it always is). A bare sync on a healthy checkout never
+    # reconciling (--reconcile). A bare sync on a healthy checkout never
     # enters this branch: there `.cache` is either the intact symlink or the
     # main checkout's own real directory.
     if cache_worktree_cache_clobbered; then
-        if [[ "$full" == true || ! -f "$CACHE_DIR/meta.json" || "$force_reconcile" == true ]] \
-            || ! reconcile_is_fresh 60; then
+        if [[ "$full" == true || ! -f "$CACHE_DIR/meta.json" || "$force_reconcile" == true ]]; then
             cache_worktree_clobber_refusal
             return 1
         fi
@@ -816,9 +798,9 @@ main() {
             summary_parts+=("$delta_proj_count projects updated")
         fi
 
-        # Reconcile: time-gated to once per hour, or forced with --reconcile
+        # Only the lane preflight requests the full identifier walk.
         local did_reconcile=false
-        if [[ "$force_reconcile" == true ]] || ! reconcile_is_fresh 60; then
+        if [[ "$force_reconcile" == true ]]; then
             local reconciled_count
             reconciled_count=$(reconcile_issues)
             did_reconcile=true

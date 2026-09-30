@@ -147,11 +147,11 @@ awk 'NF {line[++count]=$0} END {first=count-39; if (first < 1) first=1; for (i=f
 
 ### Bounded issue reads
 
-For each `triage` or `heartbeat` pass, replace `[AGE]` with an `Nd` value that covers the fleet start and run each code line in a separate tool call. The first line redirects the complete response to ignored scratch storage, so no issue body enters the overseer. The second line is the only issue-list result the overseer reads. It emits each identifier, title, and `## Done when` body. The last line removes the complete response.
+For each `triage` or `heartbeat` pass, read the watch's cached complete team list. The watch refreshes it once per `ORCH_WATCH_TRACKER_INTERVAL`, not once per event. Run each code line in a separate tool call. The second line is the only issue-list result the overseer reads. It emits each identifier, title, and `## Done when` body. The last line removes the complete response.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --created-since [AGE] --max --format=raw > tmp/oversee-triage-source.json
-jq '[.issues.nodes[] | {identifier, title, done_when: ((("\n" + (.description // "")) | gsub("\r\n"; "\n") | split("\n## Done when\n")) as $sections | if ($sections | length) > 1 then ($sections[1] | split("\n## ")[0] | gsub("^[[:space:]]+|[[:space:]]+$"; "")) else "" end)}]' tmp/oversee-triage-source.json
+jq '.issues' .cache/linear/watch-team.json > tmp/oversee-triage-source.json
+jq '[.[] | {identifier: .id, title, done_when: ((("\n" + (.description // "")) | gsub("\r\n"; "\n") | split("\n## Done when\n")) as $sections | if ($sections | length) > 1 then ($sections[1] | split("\n## ")[0] | gsub("^[[:space:]]+|[[:space:]]+$"; "")) else "" end)}]' tmp/oversee-triage-source.json
 rm -f tmp/oversee-triage-source.json
 ```
 

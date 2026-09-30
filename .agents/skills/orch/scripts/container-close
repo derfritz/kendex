@@ -257,13 +257,7 @@ PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
   || { container_close_message parent-response "$@" >&2; exit 1; }
 if [[ "$PARENT_TYPE" == "completed" ]]; then printf 'closed %s\n' "$PARENT_ID"; exit 0; fi
 
-PENDING=""
-for _attempt in 1 2 3; do
-  PENDING="$("$LINEAR" cache issues children "$PARENT_ID" --recursive --pending --format=ids)" \
-    || { container_close_message pending-unreadable "$@" >&2; exit 1; }
-  [[ -z "$PENDING" ]] && break
-  [[ $_attempt -eq 3 ]] || sync_linear || { container_close_message sync-failed "$@" >&2; exit 1; }
-done
+PENDING="$("$LINEAR" cache issues children "$PARENT_ID" --recursive --pending --format=ids)" || { container_close_message pending-unreadable "$@" >&2; exit 1; }
 if [[ -n "$PENDING" ]]; then print_deferred "$PENDING"; exit 0; fi
 
 CHILDREN="$("$LINEAR" cache issues children "$PARENT_ID" --recursive)" \
@@ -312,13 +306,10 @@ fi
 COMPLETE_RC=0
 "$LINEAR" issues complete ${COMPLETE_ARGS[@]+"${COMPLETE_ARGS[@]}"} >/dev/null || COMPLETE_RC=$?
 if [[ $COMPLETE_RC -ne 0 ]]; then
-  for _attempt in 1 2 3; do
-    sync_linear || { container_close_message completion-sync "$@" >&2; exit 1; }
-    PARENT="$(parent_json)" || { container_close_message completion-parent "$@" >&2; exit 1; }
-    PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" \
-      || { container_close_message completion-response "$@" >&2; exit 1; }
-    [[ "$PARENT_TYPE" == "completed" ]] && break
-  done
+  # A failed write needs one fresh answer to detect another closer's win.
+  sync_linear || { container_close_message completion-sync "$@" >&2; exit 1; }
+  PARENT="$(parent_json)" || { container_close_message completion-parent "$@" >&2; exit 1; }
+  PARENT_TYPE="$(jq -r '.state_type // ""' <<<"$PARENT")" || { container_close_message completion-response "$@" >&2; exit 1; }
   [[ "$PARENT_TYPE" == "completed" ]] || { container_close_message completion-failed "$@" >&2; exit 1; }
   container_close_message already-completed "$@" >&2
 fi

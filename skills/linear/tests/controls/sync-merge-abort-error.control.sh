@@ -4,3 +4,8 @@ control_expect "an aborted cache merge fails the sync"
 control_replace scripts/lib/cache.sh 1 \
     '    if (( result_count < existing_count )); then' \
     '    if false; then'
+
+control_expect "incremental sync does not repeat an old reconciliation"
+control_replace scripts/commands/sync.sh 1 \
+    '        if [[ "$force_reconcile" == true ]]; then' \
+    '        if true; then'

@@ -81,7 +81,12 @@ check() {
   assert_eq "$(watch "$2")" "$2" "$1" "$ERR"
 }
 
-tracker_items() { printf '%s\n' "$1" > "$STUB_DIR/tracker.out"; }
+tracker_items() {
+  printf '%s\n' "$1" > "$STUB_DIR/tracker.out"
+  # A changed fixture reply starts a new live-list interval. Repeated runs
+  # without a reply change keep the snapshot, as the interval suite proves.
+  rm -f -- "$CASE_REPO_ROOT/.cache/linear/watch-team.json"
+}
 verdicts() { printf '{"triaged":%s}\n' "$1" > "$STUB_DIR/oversee-state.json"; }
 
 echo "=== oversee-watch triage ==="
@@ -91,20 +96,20 @@ echo "=== oversee-watch triage ==="
 # exist by then if lane-asking kept its own.
 new_case triage_new
 printf '1786957201\n' > "$STUB_DIR/now.epoch"
-printf '3\n' > "$STUB_DIR/tracker.want-created-since"
+
 printf 'Do you want to proceed?\n   ❯ 1. Yes\n     2. No\n' > "$STUB_DIR/pane-gh-2.txt"
 tracker_items '[]'
 run -- --max-loops 1 gh-1 gh-2
 check "a standing lane prompt wakes the watch before any tracker item" "first=EVENT+lane-asking+gh-2"
 
 # Items created after --since are one event each, in one wake, read from the
-# live list for the fleet's team over a created-since day window; printing an
+# complete list for the fleet's team; printing an
 # event does not acknowledge it, and the fingerprints share the one per-repo
 # baseline.
 tracker_items '[{"id":"KEN-1200","created_at":"2026-08-15T10:00:00.000Z"},{"id":"KEN-1202","created_at":"2026-08-15T10:30:00.000Z"},{"id":"KEN-1204","created_at":"2026-08-15T11:30:00.000Z"},{"id":"KEN-1199","created_at":"2026-08-15T08:59:59.000Z"}]'
 run -- gh-1 gh-2
 check "three items after --since are three triage events in one wake, the earlier item not among them, read from the team's created-since list, none acknowledged by printing" \
-  "rc=0 first=EVENT+triage+KEN-1200 events=3 out~EVENT+triage+KEN-1202=true out~EVENT+triage+KEN-1204=true out~KEN-1199=false tracker~issues+list+--team+kendex+--created-since+=true tracker~d+--max+--format%esafe=true state~triage%tKEN-1200=false state~lane-asking%tgh-2%t=true state_files=1"
+  "rc=0 first=EVENT+triage+KEN-1200 events=3 out~EVENT+triage+KEN-1202=true out~EVENT+triage+KEN-1204=true out~KEN-1199=false tracker~issues+list+--team+kendex+--max+--format%esafe=true state~triage%tKEN-1200=false state~lane-asking%tgh-2%t=true state_files=1"
 run -- --max-loops 1
 check "an unacknowledged item repeats on the next run" "first=EVENT+triage+KEN-1200"
 

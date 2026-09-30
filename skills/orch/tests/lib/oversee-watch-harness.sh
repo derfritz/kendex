@@ -493,18 +493,13 @@ cat > "$TMP_ROOT/bin/linear-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" > "$STUB_DIR/tracker.args"
+printf '%s\n' "$*" >> "$STUB_DIR/tracker.calls"
 states=""
 args=("$@")
 for i in "${!args[@]}"; do
   [[ "${args[$i]}" != --state ]] || states="${args[$((i + 1))]:-}"
 done
-if [[ -f "$STUB_DIR/tracker.want-created-since" ]]; then
-  want="$(cat "$STUB_DIR/tracker.want-created-since")"
-  [[ " $* " == *" --created-since ${want}d "* ]] || {
-    printf 'expected --created-since %sd, got: %s\n' "$want" "$*" >&2
-    exit 9
-  }
-fi
+
 [[ -f "$STUB_DIR/tracker.err" ]] && cat "$STUB_DIR/tracker.err" >&2
 rc=0; [[ -f "$STUB_DIR/tracker.rc" ]] && rc="$(cat "$STUB_DIR/tracker.rc")"
 [[ "$rc" -eq 0 ]] || exit "$rc"
@@ -673,6 +668,7 @@ chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
 STUB_DIR=""
 STATE_DIR=""
 new_case() {
+  rm -f -- "$CASE_REPO_ROOT/.cache/linear/watch-team.json"
   STUB_DIR="$TMP_ROOT/cases/$1"
   rm -rf "$STUB_DIR"
   mkdir -p "$STUB_DIR"

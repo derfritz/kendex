@@ -426,7 +426,7 @@ Use the output as `MAIN_REPO_ROOT`.
 6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. A project's install record (`.kendex-lock.json`) is recorded by the route its own instructions name, never re-recorded by the lane after a merge or a restack. On failure, report the command and its diagnostic in § 6 and keep the worktree. Once it passes, close the item out under the main checkout's state directory, `tmp/` under `[MAIN_REPO_ROOT]` by default, before worktree removal. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive; otherwise drop the `--archive` pair:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state remove [STATE_KEY] --archive [WORKTREE_PATH]/tmp
+   .agents/skills/orch/scripts/workflow-state remove [STATE_KEY] --archive [WORKTREE_PATH]/tmp --archive [WORKTREE_PATH]/.cache/linear/requests.jsonl
    ```
 
    What it takes, archives and keeps is [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out). Its `removed kept=` line names the archive holding the item's state and the worktree's `tmp/` records, and goes on § 6's `tmp/ close-out` line. A refusal keeps the worktree, since the worktree's records may be in no archive: the refusal's first line goes on that line instead, and the worktree line reads `standing — close-out refused`.

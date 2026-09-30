@@ -35,6 +35,12 @@ LINEAR_FORMAT = "safe"
 # with no wait at all.
 LINEAR_RETRY_BASE_DELAY = "1"
 
+# This repository's allocation of the user's shared hourly request quota.
+# Empty uses X-RateLimit-Requests-Limit. Equal shares use caller identities
+# seen in the trailing hour. Repositories using the same user divide one
+# quota, even with different keys; their journals do not combine automatically.
+LINEAR_HOURLY_BUDGET = ""
+
 [secrets]
 
 # The key every Linear call authenticates with. Create one in Linear, under

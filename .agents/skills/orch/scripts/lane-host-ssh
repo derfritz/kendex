@@ -338,10 +338,12 @@ def archive_tmp(row, item, worktree_path):
     """Preserve remaining lane records locally before close removes their worktree."""
     data = remote(row, '''paths=()
 for base in "$1" "$2"; do
-  candidate="$base/tmp"
-  if test -e "$candidate" || test -L "$candidate"; then
-    paths+=("${candidate#/}")
-  fi
+  for leaf in tmp .cache/linear/requests.jsonl; do
+    candidate="$base/$leaf"
+    if test -e "$candidate" || test -L "$candidate"; then
+      paths+=("${candidate#/}")
+    fi
+  done
 done
 if test "${#paths[@]}" -eq 0; then exit 0; fi
 exec tar -chzf - -C / -- "${paths[@]}"''', row["clone"], worktree_path).stdout

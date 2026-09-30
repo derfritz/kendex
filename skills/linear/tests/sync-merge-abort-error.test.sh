@@ -36,8 +36,9 @@ make_env() {
   # cache unchanged.
   printf '[{"id":"c1","body":"kept"}]' > "$root/.cache/linear/comments/PROJ-1.json"
   printf '[{"id":"c3","body":"kept too"}]' > "$root/.cache/linear/comments/PROJ-3.json"
-  # Old synced_at forces an issues delta; fresh reconciled_at skips reconcile
-  jq -n --arg synced "$OLD_SYNC" --arg rec "$(date -Iseconds)" \
+  # A round's incremental refresh must not repeat the preflight ID walk,
+  # even when its reconciliation stamp is old.
+  jq -n --arg synced "$OLD_SYNC" --arg rec "$OLD_SYNC" \
     '{synced_at: $synced, reconciled_at: $rec, stats: {}}' > "$root/.cache/linear/meta.json"
 
   delta_node="{\"id\":\"$delta_id\",\"identifier\":\"PROJ-1\",\"title\":\"updated\",\"description\":\"\",\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"},\"assignee\":null,\"project\":null,\"projectMilestone\":null,\"cycle\":null,\"parent\":null,\"team\":{\"name\":\"Claude\"},\"labels\":{\"nodes\":[]},\"priority\":0,\"estimate\":null,\"sortOrder\":1,\"url\":\"u\",\"createdAt\":\"2026-07-01T00:00:00Z\",\"updatedAt\":\"2026-07-27T00:00:00Z\",\"archivedAt\":null,\"trashed\":null,\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}"
@@ -136,6 +137,8 @@ rc=0
 run_sync "$OK_ROOT" >/dev/null 2>"$TMP_BASE/ok-err" || rc=$?
 assert_eq "a healthy incremental sync still succeeds" \
   $rc 0
+assert_eq "incremental sync does not repeat an old reconciliation" \
+  "$(jq -r '.reconciled_at' "$OK_ROOT/.cache/linear/meta.json")" "$OLD_SYNC"
 assert "a healthy sync reports completion" \
   grep -q "Done (" "$TMP_BASE/ok-err"
 assert_eq "the healthy merge keeps every entry and adds the created issue" \

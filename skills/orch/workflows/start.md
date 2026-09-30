@@ -59,7 +59,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 ## 3. Resolve Work Item
 
-**Linear** — sync before read:
+**Linear**: reconcile once at lane preflight, before the first read. A repeated visit to this section for a container child uses the same cache, without another reconcile:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile

@@ -18,7 +18,7 @@ Delegate implementation to specialist agent(s). Handles a single issue and a bun
 
 Resolve `TRACKER` first — `github` skips the Linear-only container preflight.
 
-**Container preflight** (Linear only, before any workflow state exists). Fetch the bundle with `--with-bundle`:
+**Container preflight** (Linear only, standalone init before any workflow state exists). Managed callers already ran this preflight. On a resumed lane use `sync --if-stale 15` instead of repeating reconciliation. Fetch the bundle with `--with-bundle`:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh sync --reconcile

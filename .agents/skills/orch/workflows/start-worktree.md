@@ -17,7 +17,7 @@ The full session from inside a worktree: implement → review → submit → fin
 
    Resolve `TRACKER` per [SKILL.md § Tracker Resolution](../SKILL.md#tracker-resolution). Set `WORKTREE_PATH` to `git-context repo-root .`.
 
-2. **Refuse containers** — Linear only, before any state exists. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
+2. **Refuse containers**: Linear only, before any state exists. Reconcile once per lane. On a resumed lane use `sync --if-stale 15` instead. Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to:
 
    ```bash
    .agents/skills/linear/scripts/linear.sh sync --reconcile

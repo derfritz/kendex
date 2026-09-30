@@ -117,7 +117,7 @@ esac
 exec git "$@"
 ''')
         (self.source / ".kendex-generated.json").write_text('[\n  ".agents/skills/orch/scripts/lane-marker"\n]\n')
-        (self.source / ".gitignore").write_text(".env.local\n.cache/\ntmp/\n")
+        (self.source / ".gitignore").write_text(".env.local\n.cache\ntmp/\n")
         (self.source / "kendex.toml").write_text("")
         for args in (("init", "-q"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "seed")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -1105,8 +1105,12 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
         self.assertEqual((clone / ".git/lane-host-item").read_text(), "TEST-1\n")
 
     def test_close_archives_before_delete(self):
-        for state in ("present", "removed"):
+        original = self.script.read_text()
+        rule = '  for leaf in tmp .cache/linear/requests.jsonl; do'
+        self.assertEqual(original.count(rule), 1)
+        for state in ("present", "removed", "control"):
             with self.subTest(state=state):
+                self.script.write_text(original.replace(rule, '  for leaf in tmp; do') if state == "control" else original)
                 self.row["clone"] = str(self.root / state)
                 self.inventory.write_text(json.dumps([self.row]))
                 self.assertEqual(self.create().returncode, 0)
@@ -1117,6 +1121,14 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
                 (clone / "tmp/clone.json").write_bytes(b'"clone-record"\n')
                 (worktree / "tmp/return.json").write_bytes(b'"worktree-record"\n')
                 (worktree / "tmp/linked.json").symlink_to(clone / "tmp/clone.json")
+                journal = clone / ".cache/linear/requests.jsonl"
+                journal.parent.mkdir(parents=True, exist_ok=True)
+                journal.write_bytes(b'{"caller":"TEST-1"}\n')
+                if (worktree / ".cache").is_symlink():
+                    (worktree / ".cache").unlink()
+                elif (worktree / ".cache").exists():
+                    shutil.rmtree(worktree / ".cache")
+                (worktree / ".cache").symlink_to(clone / ".cache")
                 if state == "removed":
                     subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)], check=True)
                 output = self.root / (state + ".stdout")
@@ -1130,6 +1142,11 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
                 self.assertEqual(archive.parent, Path(self.env["FLEET_DIR"]) / "archive/repo/TEST-1")
                 self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
                 with tarfile.open(archive) as saved:
+                    journal_member = str(journal).lstrip("/")
+                    if state == "control":
+                        self.assertNotIn(journal_member, saved.getnames())
+                    else:
+                        self.assertEqual(saved.extractfile(journal_member).read(), b'{"caller":"TEST-1"}\n')
                     self.assertEqual(saved.extractfile(str(clone / "tmp/clone.json").lstrip("/")).read(), b'"clone-record"\n')
                     member = str(worktree / "tmp/return.json").lstrip("/")
                     if state == "removed":
@@ -1137,10 +1154,13 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
                     else:
                         self.assertEqual(saved.extractfile(member).read(), b'"worktree-record"\n')
                         self.assertEqual(saved.extractfile(str(worktree / "tmp/linked.json").lstrip("/")).read(), b'"clone-record"\n')
+                        if state != "control":
+                            self.assertEqual(saved.extractfile(str(worktree / ".cache/linear/requests.jsonl").lstrip("/")).read(), b'{"caller":"TEST-1"}\n')
                 self.assertFalse(worktree.exists())
                 self.assertFalse((clone / ".git/lane-host-item").exists())
                 if state == "present":
                     self.assertIn("before-delete:" + line, (self.root / "calls").read_text())
+        self.script.write_text(original)
 
     def test_close_accepts_merged_and_keeps_the_whole_archive(self):
         # lane-close passes --merged on a merged full close; a static host cuts

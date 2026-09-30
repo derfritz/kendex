@@ -32,6 +32,7 @@ Resources:
   auth-check      API key + team target preflight (--strict fails with no team)
   sync            Sync Linear data to local cache
   cache           Query local cache (issues, projects, cycles, initiatives, comments, labels)
+  usage           Trailing-hour counts, top callers, and over-share callers (JSON)
 
 Examples:
   # Issues with parent/sub-issues and relations
@@ -67,6 +68,10 @@ Environment:
                   [env] (committed, non-secret). With no team, writes refuse and
                   reads run without a team filter. Only issues/projects/cycles/
                   labels create take --team <name> as a per-call override.
+  LINEAR_HOURLY_BUDGET  Positive hourly budget in repository [env]. Defaults to
+                  X-RateLimit-Requests-Limit. Equal shares use caller identities
+                  observed in the trailing hour. Warnings name low Remaining
+                  too. This does not reserve quota.
 
 For resource-specific help:
   ./linear.sh <resource> --help
@@ -93,7 +98,21 @@ case "$resource" in
     document) resource="documents" ;;
 esac
 
+export LINEAR_USAGE_RESOURCE="$resource"
+export LINEAR_USAGE_ACTION="${1:-request}"
+[[ "$resource" != sync ]] || export LINEAR_USAGE_ACTION="${1:-incremental}"
+
 case "$resource" in
+    usage)
+        case "${1:-}" in
+            --help|-h) printf 'Usage: linear.sh usage\nReads .cache/linear/requests.jsonl without API authentication.\n'; exit 0 ;;
+            '') ;;
+            *) echo 'linear-usage: unknown-option' >&2; exit 1 ;;
+        esac
+        export LINEAR_SKIP_API_KEY_RESOLUTION=1
+        source "$SCRIPT_DIR/lib/common.sh"
+        linear_usage_report
+        ;;
     sync)
         exec "$BASH" "$SCRIPT_DIR/commands/sync.sh" "$@"
         ;;

@@ -32,6 +32,7 @@ Reads go through `cache`; writes go through the live commands, which write throu
 | `teams` / `users` / `statuses` / `documents` | list, get (`users` also has `me`) |
 | `cycles` | list, create, update |
 | `sync` | Refresh the local cache (`--full`, `--reconcile`, `--if-stale N`, `--stats`) |
+| `usage` | Cache-only trailing-hour request counts, top callers, and over-share callers |
 | `cache` | Cache-only reads: issues, projects, comments, labels, initiatives, cycles, attachments, status |
 | `auth-check` | Report the resolved key/team and `writes_enabled` (`--strict` exits non-zero when writes would refuse) |
 | `session-status` | Aggregated status for the `/start` workflow |
@@ -53,6 +54,8 @@ linear.sh sync --reconcile
 Both `issues list` and `cache issues list` return the first 75 rows by default and warn on stderr when that truncated the result; `--max` fetches everything. `--limit N` caps a CACHE listing's total; on the live path it is the per-page size (`--max --limit N` pages at N under a 200-page cap that warns when it truncates). An audit that must see the whole backlog passes `--max`.
 
 The cache is `.cache/linear` under the physical worktree root ([README.md](README.md)); a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink but is a real directory refuses `sync` and names the repair. A repo whose `WORKTREE_SYMLINKS` deliberately excludes `.cache` is exempt.
+
+Reconcile once at lane preflight. Use `sync --if-stale 15` per round. Polling reads use `cache`; refresh only at a named interval. Read request usage and shared-user budget scope in [README.md § Request usage](README.md#request-usage). Set the repository's hourly allocation with `LINEAR_HOURLY_BUDGET` in `[env]`. Keep `.cache/linear/requests.jsonl` in the lane archive. A `Rate limited` error carries `reset` in UTC epoch milliseconds; `null` means the server sent no reset header.
 
 ## Team Target
 
