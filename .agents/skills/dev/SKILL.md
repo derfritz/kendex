@@ -74,6 +74,8 @@ Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): corre
 
 ## Round Contract
 
+Linear reconcile, cache continuation, explicit `Linear sync: skip`, and held quota writes follow [dev-implement.md § 2.1](workflows/dev-implement.md#21-claim-and-read-context). Record skipped syncs and still-owed writes in the summary the artifact embeds. The round-end retry belongs to [§ 9.1](workflows/dev-implement.md#91-completion-comment); an explicit skip never retries.
+
 Execute workflow sections in order; a "**Skip if**" condition is the workflow's decision, never your own scope assessment. Never push and never open a PR. The orchestrator does that after review passes. A finding on a mechanism this diff introduces or arms is a fix whatever the round, unless Step 0 of the disposition flow excludes it; a `Declined:` there takes one of the reason forms [`../orch/references/finding-disposition.md`](../orch/references/finding-disposition.md) § Decision flow sets out, never a label or a test count.
 
 A session keeps the rule text it loaded, and a push, `worktree create --reuse` or a restack can rebase the branch onto a base that changed that text. A session that already ran a round on this branch runs this diff before the round's first step, `[PREVIOUS_ROUND_COMMIT]` being the commit its last round reported: `git diff --no-renames --name-only [PREVIOUS_ROUND_COMMIT] HEAD -- <each loaded file's repo path>`. Before that first step, it reads again each listed file. A listed path it loaded that no longer exists voids the text loaded from it; it reads again the skill's current `SKILL.md`, or the file that replaced it, in its place.

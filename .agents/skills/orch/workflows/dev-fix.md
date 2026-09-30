@@ -131,6 +131,7 @@ Cancel ends the workflow; a selection goes to § 2.
    Round ID: [DEV_ROUND_ID]
    Artifact Key: [ISSUE_ID]
    QA: [QA_AGENT]
+   [If Linear preflight reconcile passed or the lane brief forbids reconciles: "Linear sync: skip"]
    [If the round may add files: "Adds: [REPO_RELATIVE_PATHS]"]
    [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 

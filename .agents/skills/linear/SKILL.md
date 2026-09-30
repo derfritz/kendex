@@ -60,6 +60,8 @@ linear.sh sync --reconcile
 
 Both `issues list` and `cache issues list` return the first 75 rows by default and warn on stderr when that truncated the result; `--max` fetches everything. `--limit N` caps a CACHE listing's total; on the live path it is the per-page size (`--max --limit N` pages at N under a 200-page cap that warns when it truncates). An audit that must see the whole backlog passes `--max`.
 
+A quota failure reports `Rate limited. Try again later.` and `Requests-Reset` together in its error JSON. `Requests-Reset` preserves the server header value; `null` means the response supplied no reset time. Caller workflows own held writes and their retries.
+
 The cache is `.cache/linear` under the physical worktree root ([README.md](README.md)); a linked worktree whose `.cache` should be a `WORKTREE_SYMLINKS`-managed symlink but is a real directory refuses `sync` and names the repair. A repo whose `WORKTREE_SYMLINKS` deliberately excludes `.cache` is exempt.
 
 ## Team Target

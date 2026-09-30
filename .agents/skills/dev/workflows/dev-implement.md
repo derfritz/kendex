@@ -14,9 +14,10 @@ Run `pwd -P` before the first repo-relative command; it must print the delegatio
 **A bundle needs an explicit single-PR marker.** A parent with children is a CONTAINER unless one of exactly three markers is present: `(one PR)` in its title, `Audit Bundle: yes` in the delegation, or a leaf issue carrying an internal checklist. The title marker outranks an `agent:multi` label. With none present, stop and report the mis-delegation. Check the marker against the delegation's `Parent Title:` line; when a bundled delegation omits that line, read the title first — never classify from labels and children alone:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
 .agents/skills/linear/scripts/linear.sh cache issues get [PARENT_ID]
 ```
+
+Apply § 2.1's Linear sync policy before this title read. A `Linear sync: skip` delegation reads only the cache.
 
 In the sub-issue tree, complete blockers before the issues they block; entries marked `(completed)` are context only and are skipped in the § 4 loop.
 
@@ -41,16 +42,34 @@ git -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]
 
 Determine the tracker: `Issue:`/`Parent: ABC-123` → Linear; `GitHub Issue: OWNER/REPO#N` → GitHub; no reference → ad-hoc (delegation text is the source of truth; skip every tracker write).
 
-Linear only — activate the issue, or the parent alone if bundled (sub-issues activate individually in § 4):
+**Linear sync policy.** A delegation with `Linear sync: skip` runs no `sync --reconcile`, including bundle title reads and the round-end retry. Read the lane's preflight cache and record the explicit skip in the summary that the round artifact embeds.
+
+Without that line, reconcile before activation or any cache read. Save this block as `tmp/linear-sync.sh` and run it through the orch job runner. Its result file carries the sync outcome for the round summary.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
+set -euo pipefail
+mkdir -p tmp
+if .agents/skills/linear/scripts/linear.sh sync --reconcile >tmp/linear-sync.log 2>&1; then
+    printf 'synced\n' >tmp/linear-sync-result
+elif grep -Fq -- 'Rate limited' tmp/linear-sync.log; then
+    printf 'rate-limited\n' >tmp/linear-sync-result
+else
+    cat tmp/linear-sync.log >&2
+    exit 1
+fi
+```
+
+A `rate-limited` result continues only on the cache the lane's own preflight reconciled. Record the exact diagnostic and `Requests-Reset` in the summary. A harness tool-call timeout that interrupted reconcile takes the same route: preserve the tool's timeout diagnostic, stop any surviving reconcile job, and write `tool-call-timeout` to `tmp/linear-sync-result`. A curl/network timeout, or any other failure, still stops the round. Without confirmed preflight cache, stop on either interruption. A mandatory cache read that fails stops the round; `No cache found` after a successful sync is a cache-initialization defect. Never run this Linear preflight for GitHub-tracked or ad-hoc work.
+
+Linear only: activate the issue, or the parent alone if bundled (sub-issues activate individually in § 4):
+
+```bash
 .agents/skills/linear/scripts/linear.sh issues activate [ISSUE_ID] --agent [AGENT_TYPE]
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]
 ```
 
-The sync must succeed before activation or any cache read. A missing cache before that command is expected in a fresh worktree. If the sync fails, stop and preserve its exact diagnostic: that is a sync/auth/API/config failure, not a missing-cache result. If a mandatory cache read reports `No cache found` after sync succeeded, stop and report a cache-initialization defect. Never run this Linear preflight for GitHub-tracked or ad-hoc work.
+**Held tracker writes.** For every Linear mutation in this workflow, a `Rate limited` answer holds the write, not the implementation. Keep the plain `linear.sh` command and its payload file under this worktree's `tmp/`. Retry it once after the reported `Requests-Reset` time through the orch job runner. If the reset is absent, wait 120 seconds through that runner before the retry. Record any still-owed writes and their file paths in the summary and return them to the lane. Other write failures stop the round. Never mark the root issue Done before merge.
 
 GitHub only:
 
@@ -230,6 +249,8 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 ### 9.1 Completion Comment
 
+**Deferred reconcile.** Once per delegated round, before its final summary and before the orchestrator opens the PR, repeat a rate-limited or harness-timeout reconcile once through the orch job runner. A `Linear sync: skip` delegation never takes this retry. Preserve the retry result in the summary. A second quota answer or harness tool-call timeout leaves the sync owed to the lane; other failures stop the round. Keep held writes under § 2.1's rule.
+
 Always required. Linear posts it to the issue you implemented: write `tmp/completion-summary-[ISSUE_ID].md`, then `linear.sh comments create [ISSUE_ID] --body-file tmp/completion-summary-[ISSUE_ID].md`. GitHub and ad-hoc rounds return the same content to the orchestrator instead and ALSO carry it in the artifact via `--summary-file` (§ 10).
 
 ```markdown
@@ -290,7 +311,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 
 One `--qa-label` per § 8 signal, none if nothing triggered.
 
-Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. Bundled rounds add `--bundled` and one `--item` per sub-issue — § 11.
+Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. A Linear summary still held under quota also takes `--no-summary`; the artifact retains its content without claiming it was posted. The summary records the skipped sync, its diagnostic, the round-end retry or explicit no-retry, and any still-owed tracker writes. Bundled rounds add `--bundled` and one `--item` per sub-issue. See § 11.
 
 **Issue state.** A bundled Linear sub-issue is marked Done (`linear.sh issues update [ISSUE_ID] --state "Done"`) and aggregated by the parent session in § 11. The worktree's top-level managed issue is NOT — it stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
 
@@ -302,7 +323,7 @@ Commit: [SHA]
 QA: [signals or "none"]
 Validate: [pass, "no-verdict: suite1, suite2", or "FAILING: check1, check2"]
 Proposed rule: [proposal or "none"]
-Summary: [ISSUE_ID] ✓
+Summary: [ISSUE_ID] [✓ or held: payload path]
 </output_format>
 
 **If bundled**, mark the task completed and take the next sub-issue as a separate task, or go to § 11 when none remain.
@@ -336,6 +357,8 @@ Summary: [ISSUE_ID] ✓
    ```bash
    .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
    ```
+
+   If the parent summary is held under § 2.1, append `--no-summary` and name its payload path in the return. Record the sync outcome and owed writes in that summary.
 
    `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
 

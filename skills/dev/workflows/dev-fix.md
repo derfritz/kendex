@@ -12,6 +12,8 @@ Confirm the shell's real working directory is the delegation's `Worktree:` path 
 
 **Skip if** the delegation is ad-hoc: it carries no `Issue:` line, or its `Artifact Key:` is a `pr-N` or `local-` key, which names no issue whatever `Issue:` repeats. In such a round, `[ISSUE_ID]` in the commit header and the proposed-rule path below takes the `Artifact Key:` value. Otherwise read prior work, decisions, and handoff notes before evaluating any item.
 
+For Linear, apply [dev-implement.md § 2.1](./dev-implement.md#21-claim-and-read-context) before the cache reads, including explicit `Linear sync: skip` and its no-reconcile rule.
+
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]
@@ -89,6 +91,8 @@ Reflection is complete in § 2.1. Make no repository edit here.
 Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round-contract):
 
 If the validation list misses a rule, write `tmp/proposed-rule-[ISSUE_ID].md` with a `### Proposed Rules` heading and the proposal as one bullet. Append `--summary-file tmp/proposed-rule-[ISSUE_ID].md` to the command below. Omit the file and flag when there is no proposal.
+
+For Linear, complete [dev-implement.md § 9.1's deferred reconcile](./dev-implement.md#91-completion-comment) once before the artifact. Record skipped syncs, retry results and still-owed writes in `tmp/linear-round-summary-[ISSUE_ID].md`. Pass that file with `--summary-file` and `--no-summary`; when a proposed-rule file also exists, include its content in the same summary file. An explicit `Linear sync: skip` runs no round-end reconcile.
 
 `[BASE_BRANCH]` is what `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` reports; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because the local branch may sit behind the remote, and in a fresh clone may not exist at all.
 

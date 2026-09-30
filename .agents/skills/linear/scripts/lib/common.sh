@@ -225,9 +225,11 @@ linear_query_is_mutation() {
     return 1
 }
 
-# Make GraphQL request with error handling and retry
+# Make GraphQL request with error handling and retry.
+# Quota failures carry Requests-Reset as an opaque header value, or null when
+# absent. The dev round uses it to schedule held tracker writes.
 # Usage: graphql_query "query string" '{"var": "value"}'
-graphql_query() {
+graphql_query() (
     local query="$1"
     local variables="$2"
     if [ -z "$variables" ]; then
@@ -246,6 +248,11 @@ graphql_query() {
 
     check_api_key || return 1
     authorization=$(linear_authorization) || return 1
+
+    # The response headers and their cleanup share this request's lifetime.
+    local response_headers requests_reset
+    response_headers=$(mktemp) || { echo '{"error":"linear-http: headers=mktemp-failed"}' >&2; return 1; }
+    trap 'rm -f -- "$response_headers"' EXIT
 
     while [ $attempt -le $max_retries ]; do
         local response
@@ -269,13 +276,19 @@ graphql_query() {
                 "header = $(curl_config_quote "Content-Type: application/json")" \
                 "header = $(curl_config_quote "Authorization: $authorization")" \
                 "data = $(curl_config_quote "$payload")" \
-            | curl -s -w "${delimiter}%{http_code}" -K -
+            | curl -s --dump-header "$response_headers" -w "${delimiter}%{http_code}" -K -
         ); then
             raw_output="${delimiter}000"
         fi
 
         http_code="${raw_output##*${delimiter}}"
         response="${raw_output%${delimiter}*}"
+        requests_reset=$(LC_ALL=C awk '
+            tolower($0) ~ /^requests-reset:/ {
+                sub(/^[^:]*:[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); reset = $0
+            }
+            END { printf "%s", reset }
+        ' "$response_headers") || { echo '{"error":"linear-http: headers=read-failed"}' >&2; return 1; }
 
         # Linear emits rate-limit rejections with an OUTER HTTP 400 (the body
         # carries extensions.code RATELIMITED / extensions.statusCode 429), so
@@ -339,7 +352,8 @@ graphql_query() {
                 attempt=$((attempt + 1))
                 continue
             fi
-            echo '{"error": "Rate limited. Try again later."}' >&2
+            jq -cn --arg reset "$requests_reset" \
+                '{error: "Rate limited. Try again later.", "Requests-Reset": (if $reset == "" then null else $reset end)}' >&2
             return 1
             ;;
         *)
@@ -363,7 +377,7 @@ graphql_query() {
             ;;
         esac
     done
-}
+)
 
 # Reject a value before it reaches a spot that cannot defend itself: an unquoted
 # splice into a JSON payload, a jq program, or a shell arithmetic context. Each

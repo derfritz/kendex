@@ -1,0 +1,1 @@
+- Dev rounds use the preflight cache when Linear sync hits quota or a harness timeout. Explicit skip delegations omit sync. Quota errors report the reset time for held writes.

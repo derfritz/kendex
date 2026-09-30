@@ -18,8 +18,10 @@ STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 source "$TEST_DIR/lib/growth-state.sh"
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo "dev-round-write-wiring: scratch=mktemp-failed" >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "dev-round-write-wiring: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "dev-round-write-wiring: scratch=resolve-failed" >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
@@ -121,6 +123,8 @@ echo "=== the live command executes and binds its Adds path list ==="
 WT="$TMP_ROOT/wt"
 mkdir -p "$WT"
 git -C "$WT" init -q -b main
+git -C "$WT" config gc.auto 0
+git -C "$WT" config maintenance.auto false
 git -C "$WT" config user.email test@example.com
 git -C "$WT" config user.name Test
 git -C "$WT" config commit.gpgsign false
@@ -160,6 +164,69 @@ sed -i.bak '/dev-round-write --worktree/ s|^[[:space:]]*\.agents|true # .agents|
 printf '%s' '[{"n":1,"text":"inert workflow","reach":"tools/guard on a staged render"}]' > "$WT/tmp/dev-round-items-42-42.json"
 run_workflow_round_command "$INERT" 42-42 >/dev/null
 assert_eq "$([[ -e "$WT/tmp/dev-round-issue-826-42-42.json" ]] && echo yes || echo no)" "no" "control: a satisfied-but-inert command writes no record"
+
+echo "=== every implementation and fix delegation transports Linear sync: skip ==="
+SKIP_LINE='^[[:space:]]*\[If .*: "Linear sync: skip"\]$'
+for row in 'dev-start|Issue:' 'dev-start|Parent:' 'dev-fix|Source:'; do
+  IFS='|' read -r workflow identity <<<"$row"
+  file="$REPO_ROOT/skills/orch/workflows/$workflow.md"
+  block="$(delegation_block "$file" "$identity")"
+  assert_eq "$(matches "$block" "$SKIP_LINE")" yes "$workflow $identity carries the skip protocol line"
+  mutant="$TMP_ROOT/skip-$workflow-${identity%:}.md"
+  sed 's/"Linear sync: skip"/"Linear sync: reconcile"/' "$file" >"$mutant"
+  block="$(delegation_block "$mutant" "$identity")"
+  assert_eq "$(matches "$block" "$SKIP_LINE")" no "control: $workflow $identity cannot omit the skip protocol"
+done
+
+echo "=== dev reconcile contract: quota continues and records, other failures stop ==="
+SYNC_WORKFLOW="$REPO_ROOT/skills/dev/workflows/dev-implement.md"
+SYNC_BLOCK="$(fenced_block_with "$SYNC_WORKFLOW" 'tmp/linear-sync-result' | sed '1d;$d')"
+assert_contains "$SYNC_BLOCK" 'sync --reconcile' 'dev contract owns an executable reconcile block'
+# The fixture replaces only the external CLI. The workflow block itself runs.
+# The timeout and explicit skip routes are harness decisions, not shell exit
+# codes: this instrument cannot simulate the harness killing its tool call.
+for row in \
+  'success|0||0|synced' \
+  'quota|1|{"error":"Rate limited. Try again later.","Requests-Reset":"1790749380000"}|0|rate-limited' \
+  'auth|1|{"error":"linear-auth: http=401 credential=api-key"}|1|absent' \
+  'network|1|{"error":"HTTP error: 000"}|1|absent' \
+  'current-stop-control|1|{"error":"Rate limited. Try again later."}|1|absent'; do
+  IFS='|' read -r name stub_rc diagnostic want_rc want_result <<<"$row"
+  world="$TMP_ROOT/sync-$name"
+  mkdir -p "$world/.agents/skills/linear/scripts"
+  cat >"$world/.agents/skills/linear/scripts/linear.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$DIAGNOSTIC" >&2
+exit "$STUB_RC"
+SH
+  chmod +x "$world/.agents/skills/linear/scripts/linear.sh"
+  if [[ "$name" == current-stop-control ]]; then
+    # Restore the stop-on-quota branch that prevented implementation.
+    printf '%s\n' "$SYNC_BLOCK" | awk "/printf 'rate-limited/ { print \"    exit 1\"; next } { print }" >"$world/reconcile.sh"
+  else
+    printf '%s\n' "$SYNC_BLOCK" >"$world/reconcile.sh"
+  fi
+  rc=0
+  (cd -- "$world" && env -i PATH="$PATH" HOME="$world" STUB_RC="$stub_rc" DIAGNOSTIC="$diagnostic" \
+    bash reconcile.sh >output 2>&1) || rc=$?
+  result=absent
+  [[ ! -f "$world/tmp/linear-sync-result" ]] || result="$(<"$world/tmp/linear-sync-result")"
+  assert_eq "$rc|$result" "$want_rc|$want_result" "dev contract $name status and recorded outcome"
+  if [[ "$name" == current-stop-control ]]; then
+    control_rc=0
+    control_output="$(
+      source "$TEST_DIR/lib/assertions.sh"
+      assert_eq "$rc|$result" '0|rate-limited' 'dev contract quota status and recorded outcome'
+      exit "$FAIL"
+    )" || control_rc=$?
+    assert_eq "$control_rc" 1 'control: the current stop makes the quota contract assertion red'
+    assert_contains "$control_output" 'FAIL  dev contract quota status and recorded outcome' 'control: failure names the quota contract assertion'
+  fi
+  if [[ "$name" == quota ]]; then
+    assert_contains "$(<"$world/tmp/linear-sync.log")" '"Requests-Reset":"1790749380000"' 'dev contract retains the quota diagnostic for its artifact'
+  fi
+done
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

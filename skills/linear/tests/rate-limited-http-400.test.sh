@@ -19,11 +19,14 @@ assert_tmpdir TMP_BASE
 # that always answers with the given status/body (graphql_query appends the
 # status code after a NUL-ish delimiter via -w; emulate with %{http_code}).
 make_env() {
-  local root="$1" code="$2" body="$3"
+  local root="$1" code="$2" body="$3" headers="${4:-}"
   mkdir -p "$root/.agents/skills" "$root/bin"
   cp -R "$SKILL_DIR" "$root/.agents/skills/linear"
   git -C "$root" init -q >/dev/null
+  git -C "$root" config gc.auto 0
+  git -C "$root" config maintenance.auto false
   printf '%s' "$body" > "$root/body.json"
+  printf '%s' "$headers" > "$root/headers"
   cat >"$root/bin/curl" <<SH
 #!/usr/bin/env bash
 # Consume the -K - config from stdin like the real invocation.
@@ -32,6 +35,9 @@ args=("\$@")
 w_fmt=""
 for ((i=0; i<\${#args[@]}; i++)); do
   [[ "\${args[i]}" == "-w" ]] && w_fmt="\${args[i+1]}"
+  if [[ "\${args[i]}" == "--dump-header" ]]; then
+    cp "$root/headers" "\${args[i+1]}"
+  fi
 done
 cat "$root/body.json"
 printf '%s' "\${w_fmt/\%\{http_code\}/$code}"
@@ -50,7 +56,7 @@ run_linear() { # root, args...
   local root="$1"; shift
   # No backoff: every response here comes from the curl stub two lines up, so
   # the retry wait would be spent on nothing.
-  (cd "$root" && env PATH="$root/bin:$PATH" \
+  (cd "$root" && env -i HOME="$root" PATH="$root/bin:$PATH" \
     LINEAR_API_KEY_OVERRIDE="lin_api_test" LINEAR_TEAM="Claude" \
     LINEAR_RETRY_BASE_DELAY=0 \
     "$root/.agents/skills/linear/scripts/linear.sh" "$@" 2>&1)
@@ -64,6 +70,21 @@ out="$(run_linear "$TMP_BASE/rl" statuses list)" || rl_rc=$?
 assert_ne "a RATELIMITED body on HTTP 400 fails the call" "$rl_rc" 0
 assert_contains "rate-limited 400 reports the rate limit" "$out" "Rate limited. Try again later."
 assert_not_contains "rate-limited 400 is not a generic HTTP error" "$out" "HTTP error: 400"
+echo "=== quota errors carry the response's Requests-Reset header ==="
+# Linear's reset header is an opaque server timestamp, not a local delay.
+for row in \
+  '400|Requests-Reset: 1790749380000|1790749380000' \
+  '429|requests-reset: 1790750580000|1790750580000' \
+  '429||null'; do
+  IFS='|' read -r code header expected <<<"$row"
+  make_env "$TMP_BASE/reset-$code-$expected" "$code" "$RL_BODY" "$header"$'\r\n'
+  reset_rc=0
+  reset_out="$(run_linear "$TMP_BASE/reset-$code-$expected" statuses list)" || reset_rc=$?
+  assert_ne "quota $code with reset $expected fails the call" "$reset_rc" 0
+  reset_value="$(jq -r '.["Requests-Reset"]' <<<"$reset_out")"
+  assert_eq "quota $code carries reset $expected beside the error" "$reset_value" "$expected"
+done
+
 echo "=== failed team lookup propagates the API failure ==="
 unit_rc=0
 unit="$(cd "$TMP_BASE/rl" && env PATH="$TMP_BASE/rl/bin:$PATH" \
