@@ -122,7 +122,7 @@ class Workspace:
         self.faults: list = []
         self.counter = 0
         self.lock = threading.Lock()
-        self.dead_port = dead_port()
+
 
     def next_ts(self) -> str:
         """Slack stamps are the current time; each one here is later than the
@@ -322,7 +322,8 @@ class Handler(BaseHTTPRequestHandler):
                         self.close_connection = True
                         return None
                     if fault.get("refuse"):
-                        return self.send_json({}, 302, {"Location": f"http://127.0.0.1:{self.ws.dead_port}/{method}"})
+                        port = self.server.refusal_socket.getsockname()[1]
+                        return self.send_json({}, 302, {"Location": f"http://127.0.0.1:{port}/{method}"})
                     if fault.get("signin"):
                         return self.send_bytes(SIGNIN, "text/html; charset=utf-8")
                     if fault.get("cut"):
@@ -429,6 +430,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": False, "error": "name_taken"})
         channel = {"id": f"C{len(self.ws.channels) + 1:03d}", "name": name, "members": [BOT], "is_private": True}
         self.ws.channels[channel["id"]] = channel
+        self.ws.messages[channel["id"]] = []
         self.send_json({"ok": True, "channel": channel})
 
     def m_conversations_info(self, params):
@@ -545,18 +547,26 @@ class Server(ThreadingHTTPServer):
     through `socket.getfqdn`, a reverse lookup that can stall past the
     harness's start bound on a macOS runner."""
 
+    def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler]) -> None:
+        # Hold this port without listening so concurrent fake servers cannot
+        # accept a redirected refusal probe.
+        self.refusal_socket = socket.socket()
+        try:
+            self.refusal_socket.bind(("127.0.0.1", 0))
+            super().__init__(address, handler)
+        except BaseException:
+            self.refusal_socket.close()
+            raise
+
     def server_bind(self) -> None:
         socketserver.TCPServer.server_bind(self)
         self.server_name, self.server_port = self.server_address[:2]
 
-
-def dead_port() -> int:
-    """A port the kernel just handed out and nothing listens on."""
-    probe = socket.socket()
-    probe.bind(("127.0.0.1", 0))
-    port = probe.getsockname()[1]
-    probe.close()
-    return port
+    def server_close(self) -> None:
+        try:
+            super().server_close()
+        finally:
+            self.refusal_socket.close()
 
 
 def main() -> int:
@@ -569,16 +579,16 @@ def main() -> int:
     args = parser.parse_args()
     users = dict(item.split("=", 1) for item in args.user)
     Handler.ws = Workspace(args.token, args.app_token, users, args.page)
-    server = Server(("127.0.0.1", 0), Handler)
-    # Written aside and renamed, so the harness never reads a partial port.
-    tmp = args.port_file + ".tmp"
-    with open(tmp, "w") as handle:
-        handle.write(str(server.server_port))
-    os.replace(tmp, args.port_file)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+    with Server(("127.0.0.1", 0), Handler) as server:
+        # Written aside and renamed, so the harness never reads a partial port.
+        tmp = args.port_file + ".tmp"
+        with open(tmp, "w") as handle:
+            handle.write(str(server.server_port))
+        os.replace(tmp, args.port_file)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
     return 0
 
 
