@@ -176,11 +176,11 @@ assert_eq "$(sk_state '[.messages.C001[] | select(.text | startswith("Only"))] |
 assert_lacks "$(directives "$ROOT")" "$N1" "the non-owner's message is not routed"
 assert_lacks "$(directives "$ROOT")" "$F1" "the empty message is not routed"
 B1="$(sk_inject C001 U001 'broadcast' "$TS1" '"subtype": "thread_broadcast"')"
-sk_poll "$ROOT"
+sk_event "$ROOT" C001 "$B1"
 assert_eq "$(jq -s --arg d "C001:$B1" --arg ts "$TS1" '[.[] | select(.delivery_id == $d) | {text, thread_ts, parent_ts: .parent.ts}] == [{text:"broadcast", thread_ts:$ts, parent_ts:$ts}]' "$(sk_box "$ROOT")/to-lane.jsonl")" \
   "true" "an owner thread broadcast routes once with its thread pointer"
 B2="$(sk_inject C001 U999 'non-owner broadcast' "$TS1" '"subtype": "thread_broadcast"')"
-sk_poll "$ROOT"
+sk_event "$ROOT" C001 "$B2"
 assert_eq "$(jq -s --arg d "C001:$B2" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl")|$(sk_state '.messages.C001[-1].text')" \
   "0|Only the channel's owners steer this session; this message is not routed." "a non-owner thread broadcast receives NOT_OWNER and no directive"
 
@@ -676,9 +676,10 @@ assert_eq "$(directives "$ZETA" | wc -l | tr -d ' ')" "2" "control: the horizon 
 sk_bin_reset
 
 sk_mutant owner relay.py 'if user not in self\.binding\.owner_ids\.values\(\):' 'if user not in self.binding.owner_ids.values() and False:'
-N2="$(sk_inject "$ZETA_CH" U999 'not an owner' "$OLD2" '"subtype": "thread_broadcast"')"
-sk_poll "$ZETA"
-assert_has "$(directives "$ZETA")" "$N2 not an owner" "control: the owner gate open, a non-owner thread broadcast is routed"
+N2="$(sk_inject C001 U999 'not an owner' "$TS1" '"subtype": "thread_broadcast"')"
+sk_event "$ROOT" C001 "$N2"
+assert_eq "$(jq -s --arg d "C001:$N2" --arg ts "$TS1" '[.[] | select(.delivery_id == $d) | {text, thread_ts, parent_ts: .parent.ts}] == [{text:"not an owner", thread_ts:$ts, parent_ts:$ts}]' "$(sk_box "$ROOT")/to-lane.jsonl")" \
+  "true" "control: the owner gate open, a non-owner thread broadcast is routed"
 sk_bin_reset
 
 sk_mutant notext relay.py 'if not lines:' 'if not lines and False:'
@@ -861,12 +862,16 @@ assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "$(sk_state '[.messages.C
 sk_bin_reset
 
 
+# A one-shot fault must hit this ask, not a prior row's pending retry.
+NET="$(sk_new_root network)"
+sk_bind "$NET"
+sk_poll "$NET"
 sk_mutant network api.py 'raise Refusal\("slack-unreachable", ' 'raise Refusal("slack-response-lost", '
-sk_lm "$ZETA" ask --item overseer --to owner --file "$(sk_text q10 'Never sent?')" --options a,b --recommend a >"$SK_TMP/ask10.out"
+sk_lm "$NET" ask --item overseer --to owner --file "$(sk_text q10 'Never sent?')" --options a,b --recommend a >"$SK_TMP/ask10.out"
 ASK10="$(sed 's/^id=//' "$SK_TMP/ask10.out")"
 sk_ctl /_test/fault '{"method": "chat.postMessage", "refuse": true, "times": 1}' >/dev/null
-sk_poll "$ZETA"
-assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK10\") | .state" "$(sk_journal "$ZETA")")" "unknown" \
+sk_poll "$NET"
+assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$ASK10\") | .state" "$(sk_journal "$NET")")=$(asks "$(sk_channel "$NET")" 'Never sent?')" "0=unknown=0" \
   "control: a refused connection read as a lost response, the unsent ask is journaled unknown"
 sk_bin_reset
 
