@@ -15,6 +15,19 @@ git -C "$ROOT" config gc.auto 0
 git -C "$ROOT" config maintenance.auto false
 export LINEAR_CACHE_ROOT="$ROOT"
 REAL_DATE="$(command -v date)"
+REAL_JQ="$(command -v jq)"
+cat >"$ROOT/bin/jq" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  case "$arg" in
+    */requests.jsonl|*/requests-active.json)
+      bytes="$(wc -c <"$arg")" || exit 1
+      printf '%s %s\n' "${arg##*/}" "$bytes" >>"$TEST_JQ_READS" ;;
+  esac
+done
+exec "$REAL_JQ" "$@"
+SH
 cat >"$ROOT/bin/date" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -36,16 +49,18 @@ else
 fi
 printf '%s' "${fmt/\%\{http_code\}/$TEST_STATUS}"
 SH
-chmod +x "$ROOT/bin/date" "$ROOT/bin/curl"
+chmod +x "$ROOT/bin/date" "$ROOT/bin/curl" "$ROOT/bin/jq"
 run() {
   local now="$1" status="$2" remaining="$3" budget="$4"; shift 4
   (cd -- "$ROOT" && env -i PATH="$ROOT/bin:$PATH" HOME="$TMP_ROOT" \
-    REAL_DATE="$REAL_DATE" TEST_NOW="$now" TEST_STATUS="$status" TEST_REMAINING="$remaining" \
+    REAL_DATE="$REAL_DATE" REAL_JQ="$REAL_JQ" TEST_JQ_READS="$ROOT/jq-reads" \
+    TEST_NOW="$now" TEST_STATUS="$status" TEST_REMAINING="$remaining" \
     LINEAR_API_KEY_OVERRIDE=fixture LINEAR_TEAM=fixture LINEAR_CACHE_ROOT="$ROOT" \
-    LINEAR_RETRY_BASE_DELAY=0 LINEAR_HOURLY_BUDGET="$budget" \
+    LINEAR_RETRY_BASE_DELAY=0 LINEAR_HOURLY_BUDGET="$budget" LINEAR_USAGE_CALLER="${TEST_CALLER:-}" \
     "$ROOT/.agents/skills/linear/scripts/linear.sh" "$@" 2>&1)
 }
 JOURNAL="$ROOT/.cache/linear/requests.jsonl"
+ACTIVE="$ROOT/.cache/linear/requests-active.json"
 run_output out rc run 10000 200 11 '' users me
 assert_eq 'request succeeds' "$rc" 0
 rows="$(jq -s . "$JOURNAL")"
@@ -75,13 +90,21 @@ assert_jq 'budget defaults to the header limit' "$out" '.budget == 12 and .share
 
 # Cross a share, not merely touch it. Warnings inspect the returned balance.
 : >"$JOURNAL"
+rm -f -- "$ACTIVE"
 run_output out rc run 13600 200 11 1 users me
 assert_not_contains 'share boundary does not warn' "$out" 'linear-budget:'
 run_output out rc run 13601 200 10 1 users me
 assert_contains 'over-share request emits keyed warning with remaining' "$out" 'linear-budget: caller=KEN-2267 used=2 share=1 remaining=10 reset=1790764800000'
+active="$(cat "$ACTIVE")"
+assert_jq 'request stores the rollup over-share result' "$active" \
+  '.caller_usage == {caller:"KEN-2267",lane_item:"KEN-2267",requests:2,share:1,over_share:true}'
+run_output out rc run 13601 200 10 1 usage
+assert_jq 'report uses the same over-share decision' "$out" \
+  '.over_share == [{caller:"KEN-2267",lane_item:"KEN-2267",requests:2,share:1,over_share:true}]'
 run_output out rc run 13601 200 10 '' usage
 assert_jq 'young journal reports its observed duration' "$out" '.observed_seconds == 1 and .requests == 2'
 : >"$JOURNAL"
+rm -f -- "$ACTIVE"
 run_output out rc run 13601 200 0 12 users me
 assert_contains 'low shared Remaining warns before local share is spent' "$out" 'cause=shared-quota-low'
 run_output out rc run 13601 429 0 12 users me
@@ -93,6 +116,47 @@ run_output out rc run 13601 400 0 12 users me
 assert_ne 'RATELIMITED HTTP 400 fails the command' "$rc" 0
 assert_jq 'RATELIMITED HTTP 400 reports the reset' "${out##*$'\n'}" '.reset == 1790764800000'
 assert_jq 'RATELIMITED HTTP 400 reports endpoint and complexity resets' "${out##*$'\n'}" '.endpoint_reset == 1790764900000 and .complexity_reset == 1790765000000'
+
+# API answers maintain the same trailing-hour boundary as the report. A
+# departed identity must not reduce the current callers share.
+: >"$JOURNAL"
+rm -f -- "$ACTIVE"
+run_output out rc run 20000 200 11 2 users me
+TEST_CALLER=overseer
+run_output out rc run 20001 200 11 2 users me
+TEST_CALLER=''
+run_output out rc run 23600 200 11 2 users me
+assert_eq 'request at the hour boundary succeeds' "$rc" 0
+active="$(cat "$ACTIVE")"
+assert_jq 'request snapshot keeps only active rows without report rankings' "$active" \
+  '.first_epoch == 20000 and [.rows[].epoch] == [20001,23600] and .caller_usage.requests == 1 and .caller_usage.share == 1 and (has("top_callers") | not)'
+run_output out rc run 23601 200 11 2 users me
+active="$(cat "$ACTIVE")"
+assert_jq 'request expires inactive callers and preserves observation start' "$active" \
+  '.first_epoch == 20000 and [.rows[].epoch] == [23600,23601] and .caller_usage.requests == 2 and .caller_usage.share == 2 and .caller_usage.over_share == false'
+assert_not_contains 'expired caller does not cause an over-share warning' "$out" 'linear-budget:'
+
+# Measure jq input bytes, not elapsed time. Identical active snapshots give
+# identical request work even after the durable archive gains expired rows.
+cp -- "$ACTIVE" "$ROOT/active-baseline.json"
+: >"$ROOT/jq-reads"
+run_output out rc run 23602 200 11 2 users me
+assert_eq 'request before archive growth succeeds' "$rc" 0
+before_reads="$(cat "$ROOT/jq-reads")"
+cp -- "$ROOT/active-baseline.json" "$ACTIVE"
+jq -cn 'range(0;20000) | {epoch:1,caller:"expired",lane_item:"OLD-1",resource:"sync",action:"refresh",limit:12,remaining:11,reset:1790764800000}' >>"$JOURNAL"
+: >"$ROOT/jq-reads"
+run_output out rc run 23602 200 11 2 users me
+assert_eq 'request after archive growth succeeds' "$rc" 0
+assert_eq 'expired archive history adds no request-path input work' "$(cat "$ROOT/jq-reads")" "$before_reads"
+assert_not_contains 'request accounting never reads the durable journal' "$(cat "$ROOT/jq-reads")" 'requests.jsonl'
+assert_eq 'archive preserves expired rows and both new requests' "$(jq -s length "$JOURNAL")" 20006
+run_output out rc run 23602 200 11 2 usage
+assert_jq 'report ranks active requests from the preserved archive' "$out" \
+  '.observed_seconds == 3600 and .requests == 4 and .top_callers[0].requests == 4 and .over_share[0].requests == 4'
+printf 'invalid-json\n' >"$ACTIVE"
+run_output out rc run 23602 200 11 2 users me
+assert_ne 'corrupt active snapshot refuses request accounting' "$rc" 0
 
 for budget in junk 0 01 1000000000; do
   run_output out rc run 13601 200 10 "$budget" users me

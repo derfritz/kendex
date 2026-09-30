@@ -11,6 +11,7 @@ linear_usage_init() {
     fi
     mkdir -p -- "$CACHE_DIR" || return 1
     LINEAR_USAGE_JOURNAL="$CACHE_DIR/requests.jsonl"
+    LINEAR_USAGE_ACTIVE="$CACHE_DIR/requests-active.json"
 }
 
 # The worktree identifies a lane even when .cache points at the main checkout.
@@ -40,28 +41,46 @@ linear_usage_headers() {
 # True trailing hour, not a reset bucket. Equal shares use caller identities,
 # while the command rows expose which action spent each identity's share.
 linear_usage_rollup() {
-    local now="$1"
-    jq -s --argjson now "$now" --arg budget "$LINEAR_HOURLY_BUDGET" '
-      (map(select(.epoch <= $now)) | min_by(.epoch).epoch // $now) as $first
-      | map(select(.epoch > ($now - 3600) and .epoch <= $now)) as $rows
-      | ($rows | map(.caller) | unique | length) as $callers
+    local now="$1" mode="$2" caller="${3:-}" row="${4:-null}" input
+    case "$mode" in
+        request) input="$LINEAR_USAGE_ACTIVE" ;;
+        report) input="$LINEAR_USAGE_JOURNAL" ;;
+        *) printf 'linear-usage: invalid-mode=%s\n' "$mode" >&2; return 1 ;;
+    esac
+    jq -s --argjson now "$now" --arg budget "$LINEAR_HOURLY_BUDGET" \
+      --arg mode "$mode" --arg caller "$caller" --argjson row "$row" '
+      (if $mode == "request" then
+         (.[0] // {first_epoch: $now, rows: []}) | .rows += [$row]
+       else {first_epoch: (map(select(.epoch <= $now)) | min_by(.epoch).epoch // $now), rows: .} end) as $state
+      | $state.first_epoch as $first
+      | ($state.rows | map(select(.epoch > ($now - 3600) and .epoch <= $now))) as $rows
+      | (reduce $rows[] as $r ({};
+          .[$r.caller] //= {caller: $r.caller, lane_item: $r.lane_item, requests: 0}
+          | .[$r.caller].requests += 1)) as $counts
+      | ($counts | length) as $callers
       | (if $budget != "" then ($budget | tonumber) else ($rows | map(.limit | select(. != null)) | last // null) end) as $budget
       | (if $budget == null or $callers == 0 then null else ($budget / $callers | floor) end) as $share
-      | ($rows | group_by(.caller) | map({caller: .[0].caller, lane_item: .[0].lane_item,
-          requests: length, share: $share, over_share: ($share != null and length > $share)})) as $identities
-      | {window_start: ($now - 3600 | todateiso8601), window_end: ($now | todateiso8601),
-         observed_seconds: ([3600, ($now - $first)] | min), requests: ($rows | length),
-         budget: $budget, share: $share, callers: $identities,
-         top_callers: ($rows | group_by([.caller, .resource, .action])
-           | map({caller: .[0].caller, lane_item: .[0].lane_item, resource: .[0].resource,
-                  action: .[0].action, requests: length}) | sort_by(-.requests, .caller, .resource, .action)),
-         over_share: ($identities | map(select(.over_share))),
-         remaining: ($rows | last | .remaining // null), reset: ($rows | last | .reset // null)}' \
-      "$LINEAR_USAGE_JOURNAL"
+      | def usage: . + {share: $share, over_share: ($share != null and .requests > $share)};
+      if $mode == "request" then
+        {first_epoch: $first, rows: $rows, caller_usage: ($counts[$caller] | usage),
+         remaining: $row.remaining, reset: $row.reset}
+      else
+        ($counts | map(usage) | sort_by(.caller)) as $identities
+        | {window_start: ($now - 3600 | todateiso8601), window_end: ($now | todateiso8601),
+           observed_seconds: ([3600, ($now - $first)] | min), requests: ($rows | length),
+           budget: $budget, share: $share, callers: $identities,
+           top_callers: ($rows | group_by([.caller, .resource, .action])
+             | map({caller: .[0].caller, lane_item: .[0].lane_item, resource: .[0].resource,
+                    action: .[0].action, requests: length}) | sort_by(-.requests, .caller, .resource, .action)),
+           over_share: ($identities | map(select(.over_share))),
+           remaining: ($rows | last | .remaining // null), reset: ($rows | last | .reset // null)}
+      end' "$input"
 }
 
 linear_usage_record() (
-    local headers="$1" http_code="$2" now stamp lane caller row rollup used share remaining stats reset
+    local headers="$1" http_code="$2" now stamp lane caller row active_tmp used share remaining stats reset over_share
+    exec 198>"$CACHE_DIR/.requests.lock" || return 1
+    flock 198 || return 1
     now="$(date -u +%s)" || return 1
     stamp="$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ)" || return 1
     lane="$(linear_usage_lane)" || return 1
@@ -71,17 +90,21 @@ linear_usage_record() (
       --arg action "$LINEAR_USAGE_ACTION" --arg code "$http_code" \
       '$headers + {utc: $utc, epoch: $epoch, caller: $caller, lane_item: $lane,
         resource: $resource, action: $action, http_status: $code}')" || return 1
-    exec 198>"$CACHE_DIR/.requests.lock" || return 1
-    flock 198 || return 1
     printf '%s\n' "$row" >>"$LINEAR_USAGE_JOURNAL" || return 1
-    rollup="$(linear_usage_rollup "$now")" || return 1
-    stats="$(jq -r --arg caller "$caller" '
-      [.callers[] | select(.caller == $caller) | .requests, (.share // "unknown")]
-      + [(.remaining // "unknown")] | join(" ")' <<<"$rollup")" || return 1
-    read -r used share remaining <<<"$stats" || return 1
-    reset="$(jq -r '.reset // "unknown"' <<<"$headers")" || return 1
+    # The archive is append-only. Only the active-hour snapshot is read on
+    # an API answer, so expired archive history adds no accounting work.
+    [[ -e "$LINEAR_USAGE_ACTIVE" ]] || { : >"$LINEAR_USAGE_ACTIVE" || return 1; }
+    active_tmp="$(mktemp "$CACHE_DIR/.requests-active.XXXXXX")" || return 1
+    trap 'rm -f -- "$active_tmp"' EXIT
+    linear_usage_rollup "$now" request "$caller" "$row" >"$active_tmp" || return 1
+    mv -- "$active_tmp" "$LINEAR_USAGE_ACTIVE" || return 1
+    stats="$(jq -r '
+      [.caller_usage.requests, (.caller_usage.share // "unknown"), .caller_usage.over_share,
+       (.remaining // "unknown"), (.reset // "unknown")] | join(" ")' "$LINEAR_USAGE_ACTIVE")" || return 1
+    read -r used share over_share remaining reset <<<"$stats" || return 1
+    flock -u 198 || return 1
     if [[ "$share" != unknown && "$remaining" != unknown ]]; then
-        if (( used > share )); then
+        if [[ "$over_share" == true ]]; then
             printf 'linear-budget: caller=%s used=%s share=%s remaining=%s reset=%s\n' \
               "$caller" "$used" "$share" "$remaining" "$reset" >&2
         elif (( remaining < share )); then
@@ -96,7 +119,7 @@ linear_usage_report() (
     linear_usage_init || return 1
     exec 198>"$CACHE_DIR/.requests.lock" || return 1
     flock 198 || return 1
-    [[ -e "$LINEAR_USAGE_JOURNAL" ]] || : >"$LINEAR_USAGE_JOURNAL"
+    [[ -e "$LINEAR_USAGE_JOURNAL" ]] || { : >"$LINEAR_USAGE_JOURNAL" || return 1; }
     now="$(date -u +%s)" || return 1
-    linear_usage_rollup "$now"
+    linear_usage_rollup "$now" report
 )

@@ -44,6 +44,10 @@ The guard proves a team is configured, not that a write lands in it. A mutation 
 - Build any timestamp compared against a cached `startsAt` or `updatedAt` with `cache_now_utc` or `cache_utc_days_ago` from `scripts/lib/cache-dates.sh`, never `date -Iseconds`. The comparison is lexical against records sync stores in UTC, so a local-time value with an offset suffix only agrees on a UTC host. `date -Iseconds` is right for a timestamp this skill writes, such as `sync`'s `synced_at`.
 - Select a cycle by date, not by position in the sorted set. `cache_working_cycle`, `cache_cycles_before` and `cache_cycles_after` are the definitions, and every caller hands the working cycle over unguarded: with none running they cut at today. A caller that guards on `working == null` instead reintroduces one cache answering `--type past` with a cycle and `--cycle previous` with a refusal.
 
+## Request accounting
+
+`scripts/lib/usage.sh::linear_usage_rollup` owns the over-share decision for both API warnings and usage reports. The recorder appends to the archive without reading it. It atomically replaces the active-hour snapshot under the request lock and preserves that snapshot's first observation time. Only reports build command rankings. `tests/request-usage.test.sh` measures jq input bytes to prove that expired archive growth adds no request-path work. Its controls switch the request input to the archive and force the report branch on API answers.
+
 ## Tests
 
 ```bash
