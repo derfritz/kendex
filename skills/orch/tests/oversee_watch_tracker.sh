@@ -90,7 +90,7 @@ assert_eq "$(cat "$CASE_REPO_ROOT/.cache/linear/watch-team.json")" "$SNAPSHOT" \
 # permits the producer's successful partial result again.
 MUTANT="$(mutant_scripts tracker-complete-mutant/orch lib/watch-tracker.sh)/oversee-watch"
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/tracker-complete-mutant/github"
-mutate_file "${MUTANT%/*}/lib/watch-tracker.sh" '--max --require-complete --format=safe' '--max --format=safe'
+mutate_file "${MUTANT%/*}/lib/watch-tracker.sh" ' --max --require-complete --format=safe' ' --max --format=safe'
 world tracker_complete_control
 WATCH_BIN="$MUTANT" tracker_pass LINEAR_TEAM=fleet
 assert_eq "$(cat "$STUB_DIR/tracker.args")" 'issues list --team fleet --max --format=safe' \

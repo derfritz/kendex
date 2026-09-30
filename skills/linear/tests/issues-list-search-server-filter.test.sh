@@ -176,7 +176,7 @@ assert_jq "a space-separated --format raw produces raw JSON output" "$out8" '.is
 
 # Linear emits hasNextPage=true at the safety cap for large teams. Drive the
 # real list producer with pages, without request-journal work on each page.
-while read -r mode strict want_rc want_rows; do
+while read -r strict mode want_rc want_rows; do
   echo 0 >"$TMP_ROOT/page-count"
   run_output page_out page_rc env -i PATH="$PATH" HOME="$TMP_ROOT" \
     LINEAR_API_KEY_OVERRIDE=test-token LINEAR_CACHE_ROOT="$TMP_ROOT" \
