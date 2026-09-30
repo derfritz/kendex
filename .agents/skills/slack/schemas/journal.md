@@ -1,6 +1,6 @@
 # The relay's record
 
-What one checkout keeps under `tmp/slack/`. Every file but an owner's own under `files/` holds identifiers, never a message body.
+What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bounded parent excerpts. Full messages stay in Slack and the mailbox.
 
 | File | Writer | Holds |
 |------|--------|-------|
@@ -38,8 +38,9 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `out` | `channel`, `id`, `kind` = `notice`, `state` = `file`, `at`, `file` | A report uploaded; its thread is bound by a later `bound` line |
 | `out` | `channel`, `id`, `kind`, `state` = `unknown`, `at` | A post whose response was lost; shown by `--status`, never repeated. A post Slack refused or never received has no line: the next poll makes it again |
 | `out` | `channel`, `id`, `kind`, `state` = `refused`, `at`, `reason` | A post refused before sending; `reason` is the refusal key, `secret-value` or `file-unreadable` |
-| `resolved` | `id` | The ask with this envelope id is closed. A reply event under its thread is routed while its parent is younger than `SLACK_THREAD_DAYS`, and a history read reads the thread only when its latest reply moved |
+| `resolved` | `id` | The ask with this envelope id is closed. Live replies become directives at any age. A reconnect reads the thread only within `SLACK_THREAD_DAYS` when its latest reply moved |
 | `bound` | `file`, `id`, `ts` | The share message Slack made for an uploaded file; its thread now carries the notice's envelope |
+| `parent` | `ts`, `parent` | A parent fetched once with `conversations.replies`, `ts=thread_ts`, `limit=1`. Replay caches the pointer for later replies |
 | `thread` | `ts`, `seen` | The thread under `ts` is read past the reply stamp `seen`; only a history read writes it |
 | `mark` | `ts`, `name` | The directive's message at `ts` carries the reaction `name`: `eyes` once delivered, `white_check_mark` once the overseer's `to-lane.cursor` passes the directive. Each delivery and each poll marks `eyes` a `directive` `in` line with no `mark` line. An `eyes` line with no later `white_check_mark` line is checked every poll; `compact` drops a mark line once `ts` is past `SLACK_THREAD_DAYS` and the directive is read, and keeps the `in` and `mark` lines of a directive with no `white_check_mark` line whatever their age |
 | `connect` | `at` | The relay's first Socket Mode connection since it started is open: Slack's `hello` arrived at the UTC second `at`. The next poll reads the channel's history |
@@ -47,6 +48,18 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `reconnect` | `at` | A later connection is open; the next poll reads the channel's history, which delivers what was sent while the relay was disconnected |
 
 Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decimals; `at` is the UTC second `lane-mail` writes, or the relay's clock on a connection line. `compact` drops a connection line once its `at` is older than `SLACK_THREAD_DAYS`; the connection lines of one relay are written to the journal of every root it serves, and replay reads nothing from them. Every inbound delivery hands `lane-mail` the key `channel:ts`. Every `out` line carries its envelope's `at`. An envelope whose `at` is older than `SLACK_THREAD_DAYS` is never posted, and `compact` judges an `out` line by that same `at`, never by its `thread`, so a line it drops is one whose envelope can never post again.
+
+### Parent pointers
+
+| Field | Value |
+|-------|-------|
+| `thread_ts` | Root stamp on a threaded directive; absent on a top-level message or an ask's answer |
+| `parent.ts` | The same root stamp |
+| `parent.author` | `owner` for a user message, `bot` for a message carrying `bot_id` |
+| `parent.excerpt` | The parent's first 300 characters, with newlines collapsed to one line |
+| `parent.envelope` | The envelope id only when the relay posted the parent |
+
+A root `out` line carries `parent` for a relay-posted ask or notice. A `bound` line carries it for an uploaded file's share. Other roots get one `parent` line from the API. `compact` keeps each thread's root, cached parent and envelope mappings while the ask is open or its root, read position or last delivered or posted message is within `SLACK_THREAD_DAYS`. Live events have no thread-age gate; the horizon bounds reconnect thread reads and journal pruning.
 
 ## The status record
 

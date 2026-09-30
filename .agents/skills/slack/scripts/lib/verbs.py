@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 import re
 import shutil
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from api import Slack, markdown_checked
+from markup import plain
 from refusals import Refusal, keyed, notice
 from relay import RECONNECT_BOUND_SECONDS, mention, resolve_owner_ids
 from secret import check as secret_check
@@ -112,6 +114,7 @@ def post(
     mention_owners: bool,
     thread: Optional[str],
     update: Optional[str],
+    broadcast: bool,
 ) -> int:
     settings = load(need_owners=False)
     api = api_for(settings)
@@ -142,8 +145,19 @@ def post(
         api.post("chat.update", channel=channel, ts=update, markdown_text=body)
         notice("updated", f"{update} channel={channel}")
         return 0
-    answer = api.post("chat.postMessage", channel=channel, markdown_text=body, thread_ts=thread)
+    answer = api.post("chat.postMessage", channel=channel, markdown_text=body, thread_ts=thread, reply_broadcast=broadcast)
     notice("posted", f"{answer['ts']} channel={channel}")
+    return 0
+
+
+def thread(root: Path, ts: str, limit: Optional[int]) -> int:
+    """Print an explicitly requested thread, oldest first, as plain text."""
+    settings = load(need_owners=False)
+    api = api_for(settings)
+    messages = api.paged("conversations.replies", "messages", channel=read_binding(root).channel, ts=ts)
+    selected = itertools.islice(messages, limit) if limit is not None else messages
+    for message in sorted(selected, key=lambda m: float(m["ts"])):
+        print(plain(str(message.get("text") or ""), lambda user: user))
     return 0
 
 

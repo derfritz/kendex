@@ -38,7 +38,7 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 - The first owner reply in a question's thread closes the question. The ruling the overseer records reaches Slack as a notice with `--ref`, per [orch communication-modes.md § Owner asks](../orch/references/communication-modes.md#owner-asks).
 - Every outbound text and file passes the secret-value pattern the orch skill ships at `references/secret-value.ere`. A match is refused, journaled and never sent.
 - A relay reads its settings at start. After changing `SLACK_OWNERS`, run `slack setup` for each bound root: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one. After changing either token, restart the relay.
-- The journal holds identifiers only: [schemas/journal.md](schemas/journal.md).
+- A threaded directive carries a small parent pointer, cached in the journal: [schemas/journal.md § Parent pointers](schemas/journal.md#parent-pointers). Read the full thread only when needed with `slack thread TS [--limit N]`.
 - The channel binding is installation state written by `setup`, never a setting. The alert channel is the caller's `--channel` argument.
 - Settings live in the project's `kendex.settings.toml` and the two tokens, `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`, in its private env file: [kendex.settings.toml.example](kendex.settings.toml.example).
 

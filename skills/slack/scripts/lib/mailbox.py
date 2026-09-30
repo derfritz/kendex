@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from refusals import Refusal, keyed
 from store import parse_at
@@ -109,16 +109,21 @@ class LaneMail:
             handle.write(text + "\n")
         return handle.name
 
-    def send_directive(self, text: str, delivery_id: str) -> str:
-        """Append an owner directive; returns the envelope id it landed as,
-        whether on this call or on the earlier one this key repeats."""
+    def send_directive(self, text: str, delivery_id: str, parent: Optional[Dict] = None) -> str:
+        """Append an owner directive with its optional thread pointer.
+        Returns the envelope id, including on a repeated delivery."""
         path = self._text_file(text)
+        context = None
         try:
+            context = self._text_file(json.dumps(parent)) if parent is not None else None
+            pointer = ["--thread-ts", parent["ts"], "--parent", context] if parent is not None else []
             code, out, err = self._run(
-                "send", "--item", "overseer", "--directive", "--delivery-id", delivery_id, "--file", path
+                "send", "--item", "overseer", "--directive", "--delivery-id", delivery_id, "--file", path, *pointer
             )
         finally:
             os.unlink(path)
+            if context is not None:
+                os.unlink(context)
         if code == 0:
             return _field(out, "id=")
         first = _first(err)

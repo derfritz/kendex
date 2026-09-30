@@ -1,0 +1,1 @@
+- Slack routes owner thread replies at any age with parent context, supports channel broadcasts and thread reads, and shares one owner message standard for masters and overseers.

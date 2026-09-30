@@ -73,7 +73,7 @@ The template carries outcomes only. A question in the set names no mechanism the
 
 ## Owner asks
 
-An overseer's question to the owner is one owner ask: the template above for the mode, written to a file, sent with the recommendation and the deadline as fields, never as prose, and printed in the chat as well. The recommended option is the one the ask takes at its deadline; `--wait` names one ask's minutes, and an ask without it takes `ORCH_ASK_WAIT_MINUTES`.
+An overseer's question to the owner is one owner ask: the template above for the mode, written to a file, sent with the recommendation and the deadline as fields, never as prose. The chat shows one line naming the ask. The recommended option is the one the ask takes at its deadline; `--wait` names one ask's minutes, and an ask without it takes `ORCH_ASK_WAIT_MINUTES`.
 
 ```bash
 .agents/skills/orch/scripts/lane-mail ask --item overseer --to owner --options [OPTION_A],[OPTION_B] --recommend [RECOMMENDED_OPTION] --file [PATH]
@@ -88,7 +88,7 @@ The ask closes exactly once, through `lane-mail resolve` and nothing else, and t
 
 The overseer records the ruling per § Recording and sends `lane-mail notice --item overseer --to owner --ref [ASK_ID]` naming it, so a relay posts the ruling where the question was asked.
 
-For a delivered owner request, `--ref` binds the reply to that request's delivery id through the [lane-mail owner-channel contract](../scripts/lane-mail).
+For a delivered owner request, `--ref` binds the reply to that request's delivery id through the [lane-mail owner-channel contract](../scripts/lane-mail). Answer it under the Reply row and Thread rule in [§ Owner messages](#owner-messages).
 
 ## Opening question
 
@@ -120,15 +120,33 @@ Under `engineer` a report is the same shape with the session's own vocabulary. T
 
 ## Owner messages
 
-These rules hold for every text posted to Slack: each post the relay makes for a `to=owner` envelope, each `slack post`, and each notice or ask the overseer writes for the owner. A message only a session reads, such as a `lane-mail send` to a lane, keeps its full detail.
+This standard holds for the master and every overseer: each post the relay makes for a `to=owner` envelope, each `slack post`, and each notice or ask for the owner. A message only a session reads, such as a `lane-mail send` to a lane, keeps its full detail.
 
-Words:
+### Routing
+
+| Message | Where | When | Mention |
+|---|---|---|---|
+| Decision needed | Slack and chat | At the moment the question exists: one question per message, with the options and a recommendation, in the ceo template. A question only in the chat has not been asked. | Yes |
+| Critical notice | Slack and chat | A failure that stops work, loses data or money, or needs the owner within the hour. | Yes |
+| Progress report | Slack and chat | The master every hour, an overseer by `ORCH_REPORT_EVERY_MINUTES` ([Settings](../README.md#settings)), while the session runs, and before a succession: what landed, what runs, what blocks, and **Waiting on you** with every open owner question and its link. | No |
+| Reply | Where the owner's message arrived | An answer to an owner message. A reply on Slack shows in the chat as at most one line naming the post. | No |
+
+- Nothing else goes to Slack: no acknowledgement, no mechanism, no history. The same routing holds for every overseer.
+- Threads: a reply goes in the thread of the owner message it answers, or of the thread that message sits in; later posts on the same topic stay in that thread until the owner moves to another topic. A new topic, a decision needed, a critical notice and the progress report start at the top level. One topic per post, so the owner can answer each in its own thread. Every thread reply is also sent to the channel (Slack's "Also send to channel"), so no reply is missed.
+- An owner message that arrives with a thread pointer is read with that thread only; the master reads the thread's history on demand, never the channel's.
+
+### Thread rule
+
+- Answer a note typed in the pane in the pane only. Answer a mailbox note with `lane-mail notice --item overseer --to owner --ref [DIRECTIVE_ID] --file [PATH]`; the pane shows one line naming the reply. A directive carrying `thread_ts` takes this notice, which threads and broadcasts the reply. A `slack post` text reply takes `--thread TS --broadcast`.
+- The directive's `parent` is small context, not the full conversation. Read more only when needed with `slack thread TS [--limit N]`; TS may name the root or a reply. Read no history by default.
+
+### Words
 
 1. Write in ASD-STE100 Simplified Technical English. Put the answer first.
 2. Say what happened and what it means for the work. Name no generation number, pane id, token count, seat name, mailbox id or internal rule name unless the owner must act on it.
 3. Write a time in the owner's time zone with am or pm (`9:29 pm`), never as a `Z` stamp.
 4. Write each pull request, commit, issue and tracker item as a Markdown link labelled with its short name: `[REPO#N](https://github.com/OWNER/REPO/pull/N)`, `[SHORT_SHA](https://github.com/OWNER/REPO/commit/SHORT_SHA)`, `[KEY-N](TRACKER_ISSUE_URL)`; beside a file, the mrkdwn form below.
-5. Every written owner message starts with what changed for the owner. Follow it with four labels and short bullets: **Landed**, **Running**, **Blocked**, **Waiting on you**. Each work item carries one link to its owning tracker issue URL: a Linear issue URL for a Linear item, or the GitHub issue URL for an `issue-N` item. Never use a pull request or commit link. The tracker issue links to its pull request. Say the outcome for the owner or the fleet, not the issue title. Group small changes into one bullet. End with **Waiting on you**, with `Nothing` when empty. Keep the whole message within about 15 lines; put detail in the report file. Send one post per report, never a thread of fragments. Send one notice per fact: a reply owed to two owner notes uses one `--ref` and names the other note in its text. The `report-due` summary ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)) reaches Slack as the report file's comment only. The chat and the report file keep [§ Status report](#status-report) and carry no summary. State an outcome the owner must know without Slack in the chat when it is judged too.
+5. Every written owner message starts with what changed for the owner. Follow it with four labels and short bullets: **Landed**, **Running**, **Blocked**, **Waiting on you**. Each work item carries one link to its owning tracker issue URL: a Linear issue URL for a Linear item, or the GitHub issue URL for an `issue-N` item. Never use a pull request or commit link. The tracker issue links to its pull request. Say the outcome for the owner or the fleet, not the issue title. Group small changes into one bullet. End with **Waiting on you**, with `Nothing` when empty. Keep the whole message within about 15 lines; put detail in the report file. Send one post per report, never a thread of fragments. Send one notice per fact: a reply owed to two owner notes uses one `--ref` and names the other note in its text. The `report-due` summary ([oversee-events.md § Event kinds](oversee-events.md#event-kinds)) reaches Slack as the report file's comment only. The chat and the report file keep [§ Status report](#status-report) and carry no summary. The Routing table controls what also appears in the chat.
 6. **Waiting on you** there names each ask `lane-mail pending --item overseer --to owner` shows by its question, so the owner finds its thread in the channel, and what stands at its deadline, as a time in the owner's time zone. It is never empty while an ask is open.
 7. An ask sent during the owner's night gets no reply before morning. Its recommended option is the safe choice, and its deadline (`--wait`) falls after the owner's morning unless the ask can stand on that option.
 8. Attach a screenshot or an image when it shows the point better than words: `slack post --file`, with `--thread TS` to place it under a message.

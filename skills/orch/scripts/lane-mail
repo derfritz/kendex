@@ -170,6 +170,13 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               An id naming no owner ask is `ask-unknown`; --default on an ask
               line carrying no recommendation, which `ask` never writes, is
               `recommend-missing`
+  send --item overseer --directive ... --thread-ts TS --parent PATH
+              Slack's relay supplies both fields on a threaded owner directive.
+              PATH holds one JSON object: ts (equal to TS), author (owner or
+              bot), excerpt (the parent's first 300 characters with newlines
+              collapsed), and envelope only for a relay-posted parent.
+              inbox prints both fields as part of the envelope. A top-level
+              directive and an ask's answer carry neither
   send --item ITEM ... --delivery-id KEY
               a send whose envelope carries KEY, the sender's own name for
               this delivery. Under the mailbox lock a KEY the file already
@@ -250,6 +257,8 @@ Options:
   --default     resolve only: the ask's recommendation is the answer
   --delivery-id KEY
                 send and resolve only: the sender's name for this delivery
+  --thread-ts TS --parent PATH
+                send --item overseer --directive only: the thread pointer
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` and `watch` polls (default 5)
   --once        watch only: exit after the first announcement
@@ -263,8 +272,8 @@ Envelope, one JSON object per line: id, kind, at, from, re (answers only),
 halt (true on a directive sent with --halt), text and options (asks with
 choices), and the owner-channel fields each verb above writes: to, ref,
 attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
-re_delivery_id (notice's copy of its --ref envelope's delivery_id)
-and by (`text` or `default`, on an answer `resolve` wrote). kind is ask,
+re_delivery_id (notice's copy of its --ref envelope's delivery_id), thread_ts
+and parent (threaded owner directives only), and by (`text` or `default`, on an answer `resolve` wrote). kind is ask,
 notice, answer or directive; at is UTC; id is <epoch>-<pid>-<random>. from
 is the sender, read from its own checkout and never from an option: a lane
 verb writes the item, a send into the overseer's own mailbox and a `resolve
@@ -482,6 +491,9 @@ WAIT_GIVEN=0
 DUE=0
 DEFAULT=0
 DELIVERY_ID=""
+THREAD_TS=""
+PARENT=""
+PARENT_JSON=null
 ONCE=0
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
@@ -516,6 +528,8 @@ while [ "$#" -gt 0 ]; do
     --text) need_val "$@"; FILE="$2"; shift 2 ;;
     --default) DEFAULT=1; shift ;;
     --delivery-id) need_val "$@"; DELIVERY_ID="$2"; shift 2 ;;
+    --thread-ts) need_val "$@"; THREAD_TS="$2"; shift 2 ;;
+    --parent) need_val "$@"; PARENT="$2"; shift 2 ;;
     --once) ONCE=1; shift ;;
     --help | -h) usage; exit 0 ;;
     *) refuse option-unknown "$1" ;;
@@ -574,9 +588,21 @@ for given in $OPTS_GIVEN; do
       esac ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
     --delivery-id) case "$VERB" in send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
+    --thread-ts | --parent)
+      [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
   esac
 done
+
+# Slack's relay produces both pointer fields together on threaded directives.
+if [ -n "$THREAD_TS$PARENT" ]; then
+  [ -n "$THREAD_TS" ] && [ -n "$PARENT" ] || refuse option-conflict '--thread-ts,--parent'
+  PARENT_JSON="$(jq -ce --arg ts "$THREAD_TS" '
+    select(type == "object" and .ts == $ts and (.author == "owner" or .author == "bot")
+      and (.excerpt | type == "string" and length <= 300)
+      and (if has("envelope") then (.envelope | type == "string") else true end))
+    ' -- "$PARENT" 2>/dev/null)" || refuse file-unreadable "$PARENT"
+fi
 
 # Judged before it reaches a path: a `/`, a NUL or a dotted name would
 # otherwise select a directory of the caller's choosing.
@@ -1121,6 +1147,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
+    --arg thread "$THREAD_TS" --argjson parent "$PARENT_JSON" \
     --rawfile text "$FILE" '
       {id: $id, kind: $kind, at: ($now | todate), from: $from}
       + (if $re == "" then {} else {re: $re} end)
@@ -1131,6 +1158,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $recommend == "" then {} else {recommend: $recommend} end)
       + (if $wait == "" then {} else {wait: ($wait | tonumber), deadline: (($now + ($wait | tonumber) * 60) | todate)} end)
       + (if $delivery == "" then {} else {delivery_id: $delivery} end)
+      + (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)
       + (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)
       + (if $by == "" then {} else {by: $by} end)
       + {text: ($text | sub("\n$"; ""))}

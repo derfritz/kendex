@@ -30,6 +30,9 @@ assert_eq "$RC=$(last C777)" "0=top | UBOT | <@U001> <@U002> Alert." "--channel 
 
 sk_run -- post --root "$ROOT" --text 'In the thread.' --thread "$TS"
 assert_eq "$RC=$(last C001)" "0=$TS | UBOT | In the thread." "--thread replies under the message"
+assert_eq "$(sk_state '.messages.C001[-1].reply_broadcast')" "false" "a plain thread post does not broadcast"
+sk_run -- post --root "$ROOT" --text 'Also in the channel.' --thread "$TS" --broadcast
+assert_eq "$RC=$(sk_state '.messages.C001[-1] | [.thread_ts, .reply_broadcast] | @json')" "0=[\"$TS\",true]" "--broadcast sends the threaded reply to the channel too"
 
 sk_run -- post --root "$ROOT" --text 'Lane 3 recovered.' --update "$TS"
 assert_eq "$RC=$OUT" "0=slack: updated=$TS channel=C001" "--update edits the message at that ts"
@@ -44,6 +47,12 @@ line two" "the file's bytes are uploaded"
 assert_eq "$(last C001)" "top | UBOT | The report." "the share carries the text as its comment"
 
 # --- refusals, one row per rule -----------------------------------------------
+for flags in '--broadcast' "--broadcast --thread $TS --update $TS" "--broadcast --thread $TS --file $SK_TMP/report.md"; do
+  # Paths in this table have no spaces; each row supplies separate argv.
+  # shellcheck disable=SC2086
+  sk_run -- post --root "$ROOT" --text x $flags
+  assert_eq "$RC=${ERR1%%=*}" "2=slack: usage" "unsupported broadcast combination is refused: $flags"
+done
 BEFORE="$(sk_state '.messages.C001 | length')"
 sk_run -- post --root "$ROOT" --text 'key xoxb-0123456789-abcdefghij'
 assert_eq "$RC=$ERR1" "2=slack: secret-value=text" "text matching the secret-value pattern is refused"
@@ -76,6 +85,14 @@ sk_run -- post --root "$BARE" --text 'no binding needed' --channel C777
 assert_eq "$RC=$(last C777)" "0=top | UBOT | no binding needed" "--channel needs no binding"
 
 # --- controls, one per check ------------------------------------------------------
+sk_mutant broadcast verbs.py 'reply_broadcast=broadcast' 'reply_broadcast=False'
+sk_run -- post --root "$ROOT" --text 'Thread only.' --thread "$TS" --broadcast
+assert_eq "$(sk_state '.messages.C001[-1].reply_broadcast')" "false" "control: removing broadcast breaks channel visibility"
+sk_bin_reset
+sk_mutant broadcast-usage main.py 'if args.broadcast and \(not args.thread or args.file or args.update\):' 'if args.broadcast and False:'
+sk_run -- post --root "$ROOT" --text 'Wrong broadcast.' --broadcast
+assert_eq "$RC" "0" "control: dropping broadcast usage guard accepts an unsupported post"
+sk_bin_reset
 sk_mutant secret verbs.py 'secret_check\(body\.encode\(\), "text"\)' 'secret_check(b"", "text")'
 sk_run -- post --root "$ROOT" --text 'key xoxb-0123456789-abcdefghij'
 assert_eq "$RC" "0" "control: the text check gone, the token posts"

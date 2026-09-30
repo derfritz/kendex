@@ -197,6 +197,23 @@ sk_relay_start() {
 }
 sk_relay_stop() { kill "$SK_BG_PIDS" 2>/dev/null; wait "$SK_BG_PIDS" 2>/dev/null; SK_BG_PIDS=""; }
 sk_poll() { local root="$1"; shift; sk_run "$@" -- listen --root "$root" --once; } # ROOT [VAR=VALUE]...
+# sk_event ROOT CHANNEL TS: one real RootRelay event without a history read.
+sk_event() {
+  sk_ctl /_test/state | jq --arg c "$2" --arg ts "$3" '.messages[$c][] | select(.ts == $ts)' >"$SK_TMP/event.json" || exit 1
+  RC=0
+  env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    python3 - "$1" "$SK_TMP/event.json" "$(dirname "$SK_BIN")/lib" <<'PY' || RC=$?
+import json, pathlib, sys, time
+sys.path.insert(0, sys.argv[3])
+from relay import RootRelay
+from settings import load
+from verbs import api_for
+settings = load()
+relay = RootRelay(pathlib.Path(sys.argv[1]), settings, api_for(settings), time.time)
+relay.on_message(json.loads(pathlib.Path(sys.argv[2]).read_text()), "UBOT")
+PY
+}
 sk_channel() { jq -r .channel "$1/tmp/slack/binding.json"; }   # ROOT — the bound channel
 sk_reactions() { sk_state "[.messages.${1}[] | select(.ts == \"$2\") | (.reactions // [])[].name] | join(\",\")"; } # CHANNEL TS — its reaction names
 # sk_rebind_at ROOT TS — the binding's moment moved to TS, so a first start

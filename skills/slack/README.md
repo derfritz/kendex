@@ -14,7 +14,9 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 
 - Create or adopt one private channel per checkout and invite its owners by email.
 - Post an overseer's question to the channel with an @mention, and record the first reply in its thread as the answer.
-- Deliver any other owner message to the overseer as a directive.
+- Deliver any other owner message to the overseer as a directive, including a live reply in any thread at any age, with small parent context.
+- Read a requested thread as plain text with `slack thread`, without loading channel history.
+- Send a text reply to its thread and the channel with `slack post --thread TS --broadcast`. The relay broadcasts replies to referenced owner messages too.
 - Save the files an owner sends under `tmp/slack/files/` and name each saved path in the directive.
 - Mark each directive's message with :eyes: once it reaches the overseer's mailbox, and :white_check_mark: once the overseer reads it.
 - Post the overseer's notices and rulings, and upload its progress reports with the notice as the comment.
@@ -36,7 +38,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - The relay posts new owner-bound mailbox envelopes: questions with choices, recommendations and deadlines, threaded notices, and uploaded reports. It skips envelopes older than `SLACK_THREAD_DAYS`.
 - The relay's first run reads Slack from the moment of the binding and the mailbox from its newest envelope, so neither side's past is replayed. Open questions are posted whatever their age inside `SLACK_THREAD_DAYS`.
 - While `SLACK_MASTER_FILE` is younger than `SLACK_MASTER_MAX_AGE`, a master session answers the overseer and the relay posts no questions, notices, reports or answers from the mailbox; owner messages in the channel still reach the overseer, the relay's replies to them still post, and `slack listen --status` shows `held-by=master`. When the file goes stale or is gone, the relay resumes. [The master hold](#the-master-hold) defines which envelopes post.
-- `slack compact` drops journal lines older than `SLACK_THREAD_DAYS` once resolved. The relay runs it once a day, so the verb is refused `relay-running` while the relay runs on that checkout.
+- `slack compact` drops journal lines older than `SLACK_THREAD_DAYS` once resolved, keeping root records and reply mappings while a thread remains active. The relay runs it once a day, so the verb is refused `relay-running` while the relay runs on that checkout.
 - `slack install` writes the systemd user unit that runs the relay over the roots you name.
 
 ## Slack app
@@ -110,12 +112,11 @@ What an owner's message in the channel does:
 | Top-level | The overseer receives it as a directive; :eyes: marks it delivered, :white_check_mark: read |
 | In a question's thread, first reply | Your words are the answer; the relay replies "Recorded as your answer" |
 | In a question's thread, later reply | The overseer receives it as a directive; the relay says the question was already answered |
-| In the thread of a notice or report younger than `SLACK_THREAD_DAYS` | The overseer receives it as a directive |
-| In a thread older than `SLACK_THREAD_DAYS` | Not routed. Write top-level |
+| In any thread, at any age, including "Also send to channel" | The overseer receives it as a directive with small parent context, unless it answers an open question |
 | A file, with or without text | The overseer receives the text, then the saved path of each file |
 | A message with no text and no file | Not routed; the relay replies once, and once more after its journal is moved aside |
 | From anyone not in `SLACK_OWNERS` | Not routed; the relay replies once, then ignores that message until its journal is moved aside, which answers it once more |
-| An edit, a deletion or a thread broadcast | Ignored |
+| An edit or a deletion | Ignored |
 
 A question answered in the overseer's chat shows in its Slack thread as "Answered in the chat"; one nobody answered by its deadline shows as "No answer by the deadline", with the option that stood. After changing `SLACK_OWNERS`, run `slack setup` for each bound checkout: it invites an added owner to the channel and restarts the unit `install` wrote. A plain restart drops a removed owner but never invites an added one, who could then steer a channel they cannot see.
 
@@ -138,7 +139,7 @@ Settings go in the project's `kendex.settings.toml` under `[env]` and the tokens
 | `SLACK_APP_TOKEN` | The app-level token (`connections:write`) that opens the relay's Socket Mode connection; private env file or process environment only | unset: `listen` refuses, and so does `setup` while the unit `install` wrote stands |
 | `SLACK_OWNERS` | Comma-separated email addresses of those whose messages steer | `KENDEX_USER_EMAIL` |
 | `SLACK_POLL_SECONDS` | Seconds between two reads of each mailbox for posts and receipt marks | `15` |
-| `SLACK_THREAD_DAYS` | Days a thread stays open for replies | `7` |
+| `SLACK_THREAD_DAYS` | Journal retention and reconnect lookback in days; live replies have no age limit | `7` |
 | `SLACK_MASTER_FILE` | A file a master session touches while it answers the overseer; while it is fresh the relay posts nothing from the mailbox | empty: no hold |
 | `SLACK_MASTER_MAX_AGE` | Seconds after its last touch that `SLACK_MASTER_FILE` still holds the relay | `600` |
 

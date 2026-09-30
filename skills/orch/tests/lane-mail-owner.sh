@@ -296,6 +296,27 @@ lm send --item overseer --directive --file "$(text d 'From Slack.')" --delivery-
 assert_eq "$RC=$(wc -l < "$BOX/to-lane.jsonl" | tr -d ' ')" "0=2" \
   "the same words under another delivery id land: the id is the judge, not the minute window"
 
+# --- threaded owner directive storage ------------------------------------------
+new_repo pointer
+POINTER="$(text parent '{"ts":"1.1","author":"bot","excerpt":"A release.","envelope":"NOTICE-1"}')"
+lm send --item overseer --directive --delivery-id C1:2.2 --file "$(text reply 'Continue.')" --thread-ts 1.1 --parent "$POINTER"
+lm inbox --item overseer
+assert_eq "$RC=$(jq -c '{thread_ts,parent}' <<<"$OUT")" \
+  '0={"thread_ts":"1.1","parent":{"ts":"1.1","author":"bot","excerpt":"A release.","envelope":"NOTICE-1"}}' \
+  "inbox preserves both thread pointer fields on the stored envelope"
+for flag in --thread-ts --parent; do
+  case "$flag" in --thread-ts) value=1.1 ;; --parent) value="$POINTER" ;; esac
+  lm send --item overseer --directive --file "$(text reply 'Incomplete.')" "$flag" "$value"
+  assert_eq "$RC=$ERR" "2=lane-mail: option-conflict=--thread-ts,--parent" "a single $flag refuses an incomplete pointer"
+done
+lm send --item overseer --directive --file "$(text reply 'Broken.')" --thread-ts 1.1 --parent "$(text broken '{')"
+assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$TMP_ROOT/broken.txt" "a truncated parent file never lands a directive"
+lm send --item overseer --file "$(text reply 'Wrong target.')" --thread-ts 1.1 --parent "$POINTER"
+assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--thread-ts" "thread pointers are for overseer owner directives only"
+INVALID_POINTER="$(text invalid-parent '{"ts":"1.1","author":"other","excerpt":"A release."}')"
+lm send --item overseer --directive --file "$(text reply 'Wrong author.')" --thread-ts 1.1 --parent "$INVALID_POINTER"
+assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$INVALID_POINTER" "a parent outside Slack's owner or bot kinds is refused"
+
 # --- events -------------------------------------------------------------------
 new_repo events
 owner_ask 'Cut the scanner?' cut,keep cut 0
@@ -325,6 +346,32 @@ mutant() {
   mutate_file "$dir/lane-mail" "$2" "$3"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
+
+new_repo control_pointer
+mutant pointer-fields '+ (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)' '+ {}'
+lm send --item overseer --directive --delivery-id C1:2.2 --file "$(text reply 'Continue.')" --thread-ts 1.1 --parent "$POINTER"
+lm inbox --item overseer
+assert_eq "$(jq -r 'has("parent") or has("thread_ts")' <<<"$OUT")" "false" "control: omitted pointer fields break the inbox assertion"
+LANE_MAIL_BIN="$LANE_MAIL"
+
+new_repo control_pointer_pair
+mutant pointer-pair '[ -n "$THREAD_TS" ] && [ -n "$PARENT" ] || refuse option-conflict '\''--thread-ts,--parent'\''' '[ -n "$THREAD_TS" ] && [ -n "$PARENT" ] || :'
+lm send --item overseer --directive --file "$(text reply 'Incomplete.')" --thread-ts 1.1
+assert_eq "$ERR" "lane-mail: file-unreadable=" "control: omitting the pair guard loses its incomplete-pointer refusal"
+LANE_MAIL_BIN="$LANE_MAIL"
+
+new_repo control_pointer_target
+mutant pointer-target '[ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given"' '[ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || :'
+lm send --item overseer --file "$(text reply 'Wrong target.')" --thread-ts 1.1 --parent "$POINTER"
+assert_eq "$RC" "0" "control: omitting the target guard admits pointers on a non-directive"
+LANE_MAIL_BIN="$LANE_MAIL"
+
+new_repo control_pointer_shape
+mutant pointer-shape '(.author == "owner" or .author == "bot")' 'true'
+INVALID_POINTER="$(text invalid-parent '{"ts":"1.1","author":"other","excerpt":"A release."}')"
+lm send --item overseer --directive --file "$(text reply 'Wrong author.')" --thread-ts 1.1 --parent "$INVALID_POINTER"
+assert_eq "$RC" "0" "control: omitting parent author validation admits an unsupported author"
+LANE_MAIL_BIN="$LANE_MAIL"
 
 new_repo control_resolve
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Cut?' cut,keep cut 0

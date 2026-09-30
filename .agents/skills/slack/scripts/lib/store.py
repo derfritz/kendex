@@ -3,8 +3,8 @@ status record, the relay lock, and the files owners sent.
 
 The journal is a transport ledger of identifiers, one JSON object per line,
 replayed into `State` at start and appended to as the relay works. Its line
-shapes are schemas/journal.md. Nothing here but an owner's file holds a
-message body.
+shapes are schemas/journal.md. Parent excerpts are the only message text
+the journal stores.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ FILES = "files"
 NAME_CHARS = 200
 LINE_KINDS = {
     "seen", "start", "hold", "resume", "in", "out", "resolved", "bound", "thread", "mark",
-    "connect", "reconnect", "disconnect",
+    "connect", "reconnect", "disconnect", "parent",
 }
 # The lines a Socket Mode connection's changes write; replay reads nothing
 # from them, and `compact` drops one by its `at`.
@@ -140,6 +140,8 @@ class Thread:
     kind: str
     seen: str = "0"
     open: bool = False
+    parent: Optional[Dict] = None
+    active: float = 0.0
 
 
 
@@ -194,6 +196,7 @@ class State:
             thread_ts = str(line["thread"])
             if thread_ts not in self.threads:
                 self.threads[thread_ts] = Thread(ts=thread_ts, envelope=str(line["id"]), kind=line["kind"])
+            self.threads[thread_ts].active = max(self.threads[thread_ts].active, float(ts))
             self.by_envelope[str(line["id"])] = thread_ts
         elif kind == "out":
             env_id = str(line["id"])
@@ -214,6 +217,9 @@ class State:
             thread_ts = str(line["thread"])
             if thread_ts not in self.threads:
                 self.threads[thread_ts] = Thread(ts=thread_ts, envelope=env_id, kind=line["kind"], open=state == "open")
+            self.threads[thread_ts].active = max(self.threads[thread_ts].active, parse_at(str(line["at"])))
+            if "parent" in line:
+                self.threads[thread_ts].parent = line["parent"]
             self.by_envelope[env_id] = thread_ts
         elif kind == "resolved":
             thread_ts = self.by_envelope.get(str(line["id"]))
@@ -222,8 +228,13 @@ class State:
         elif kind == "bound":
             env_id = self.pending_files.pop(str(line["file"]), str(line["id"]))
             thread_ts = str(line["ts"])
-            self.threads[thread_ts] = Thread(ts=thread_ts, envelope=env_id, kind="notice")
+            self.threads[thread_ts] = Thread(ts=thread_ts, envelope=env_id, kind="notice", parent=line.get("parent"))
             self.by_envelope[env_id] = thread_ts
+        elif kind == "parent":
+            thread_ts = str(line["ts"])
+            if thread_ts not in self.threads:
+                self.threads[thread_ts] = Thread(ts=thread_ts, envelope="", kind="parent")
+            self.threads[thread_ts].parent = line["parent"]
         elif kind == "thread":
             thread = self.threads.get(str(line["ts"]))
             if thread is not None:
@@ -293,6 +304,8 @@ def compact(root: Path, cutoff_ts: float) -> int:
     lines = [json.loads(raw) for raw in raws]
     last_seen = max((i for i, line in enumerate(lines) if line.get("t") == "seen"), default=-1)
     last_hold = max((i for i, line in enumerate(lines) if line.get("t") in ("hold", "resume")), default=-1)
+    live = {ts for ts, thread in state.threads.items()
+            if thread.open or max(float(ts), float(thread.seen), thread.active) >= cutoff_ts}
     kept: List[str] = []
     dropped = 0
     for index, (raw, line) in enumerate(zip(raws, lines)):
@@ -310,19 +323,16 @@ def compact(root: Path, cutoff_ts: float) -> int:
         elif kind in CONNECTION_KINDS:
             drop = aged
         elif kind == "in" and old:
-            thread = state.threads.get(str(line.get("thread", "")))
-            drop = line["kind"] == "ignored" or not (pending or thread is not None and thread.open)
+            drop = line["kind"] == "ignored" or not (pending or str(line.get("thread", "")) in live)
         elif aged and line["state"] == "file":
             drop = True
         elif aged and line["state"] in ("open", "resolved"):
-            thread = state.threads.get(str(line["thread"]))
-            drop = thread is None or not thread.open
+            drop = str(line["thread"]) not in live
         elif kind == "resolved":
             thread_ts = state.by_envelope.get(str(line["id"]))
-            drop = thread_ts is None or _ts_float(thread_ts) < cutoff_ts
-        elif kind in ("bound", "thread") and old:
-            thread = state.threads.get(str(line["ts"]))
-            drop = thread is None or not thread.open
+            drop = thread_ts not in live
+        elif kind in ("bound", "thread", "parent") and old:
+            drop = str(line["ts"]) not in live
         elif kind == "mark" and old:
             drop = not pending
         if drop:

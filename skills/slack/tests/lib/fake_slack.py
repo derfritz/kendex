@@ -183,6 +183,9 @@ class Workspace:
         return [m for m in self.messages.get(channel, []) if not m.get("thread_ts") or m["thread_ts"] == m["ts"]]
 
     def thread(self, channel: str, ts: str):
+        message = next((m for m in self.messages.get(channel, []) if m["ts"] == ts), None)
+        if message is not None:
+            ts = message.get("thread_ts") or ts
         return [m for m in self.messages.get(channel, []) if m["ts"] == ts or m.get("thread_ts") == ts]
 
     def page_of(self, items: list, params: dict, key: str) -> dict:
@@ -473,6 +476,7 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return None
         message = {"user": BOT, "bot_id": BOT_ID, "text": body[0], "body_arg": body[1]}
+        message["reply_broadcast"] = params.get("reply_broadcast", False)
         if params.get("thread_ts"):
             message["thread_ts"] = params["thread_ts"]
         self.ws.channels.setdefault(params["channel"], {"id": params["channel"], "name": params["channel"], "members": [BOT], "is_private": True})

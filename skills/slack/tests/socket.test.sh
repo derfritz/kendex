@@ -6,7 +6,7 @@
 # `connect` and shown connected, an owner message landing from its event
 # alone, its eyes mark set and its envelope acknowledged, the first reply in
 # an ask's thread landing as the answer, a reply under a thread past
-# SLACK_THREAD_DAYS left unrouted, two roots on one relay each receiving its
+# SLACK_THREAD_DAYS routed from its event, two roots on one relay each receiving its
 # own channel's events and neither an unbound channel's, an event whose
 # delivery lane-mail refused landing through the next history read, an
 # envelope lost with its connection delivered by the history read of the
@@ -23,7 +23,7 @@
 # the app token's scope no longer refusing the token, events unread, routing
 # by channel gone, an unbound channel's event routed to the first root, no
 # history read on reconnect, no history read after a refused delivery or a
-# refused read, the thread-age check gone from the event path, the
+# refused read, the obsolete thread-age check restored on the event path, the
 # connection error kept past a reconnect, and a journal of connection lines
 # alone read as seeded.
 set -uo pipefail
@@ -114,7 +114,7 @@ answer() { [ -f "$(sk_box "$ROOT")/to-lane.jsonl" ] && jq -r 'select(.kind == "a
 assert_eq "$(awaited answer)" "$ASK C001:$R1 yes" "the first reply in the ask's thread lands from its event as the answer"
 sk_relay_stop
 
-# --- a reply under a thread past SLACK_THREAD_DAYS: not routed -----------------------------
+# --- a live reply under an old thread is routed -------------------------------------------
 BETA="$(sk_new_root beta)"
 sk_bind "$BETA"
 sk_rebind_at "$BETA" "$(python3 -c 'import time; print("%.6f" % (time.time() - 9 * 86400))')"
@@ -124,8 +124,8 @@ sk_poll "$BETA"
 relay "$BETA"
 OR="$(sk_inject C002 U001 'under the old one' "$OLD")"
 YR="$(sk_inject C002 U001 'under the young one' "$YOUNG")"
-assert_eq "$(landed "$BETA" "C002:$YR")|$(landed "$BETA" "C002:$OR")" "under the young one|" \
-  "a reply event under a young thread lands, and one under a thread past SLACK_THREAD_DAYS does not"
+assert_eq "$(landed "$BETA" "C002:$YR")|$(landed "$BETA" "C002:$OR")" "under the young one|under the old one" \
+  "reply events under young and old threads both land"
 sk_relay_stop
 
 # --- two roots on one relay: each channel's event lands in its own mailbox ------------------
@@ -324,10 +324,10 @@ sk_relay_stop
 sk_ctl /_test/faults-reset >/dev/null
 sk_bin_reset
 
-sk_mutant event-age relay.py 'if thread is None or not self\.live\(thread\):' 'if thread is None:'
+sk_mutant event-age relay.py '        if thread_ts == ts:\n            self.bind_file_share\(message\)' '        if thread_ts != ts and (thread_ts not in self.state.threads or not self.live(self.state.threads[thread_ts])):\n            return\n        if thread_ts == ts:\n            self.bind_file_share(message)'
 relay "$BETA"
 OR2="$(sk_inject C002 U001 'late under the old one' "$OLD")"
-assert_eq "$(landed "$BETA" "C002:$OR2")" "late under the old one" "control: the thread-age check gone from events, a reply under the old thread lands"
+assert_eq "$(landed "$BETA" "C002:$OR2")" "" "control: the obsolete live age gate loses the old-thread reply"
 sk_relay_stop
 sk_bin_reset
 
