@@ -35,8 +35,8 @@ POST="$(sk_state ".messages.${CH}[] | select(.text == \"The release shipped.\") 
 sk_ctl /_test/calls-reset >/dev/null
 REPLY="$(sk_inject "$CH" U002 'Thanks.' "$POST")"
 sk_event "$ROOT" "$CH" "$REPLY"
-assert_eq "$(jq -c --arg d "$CH:$REPLY" 'select(.delivery_id == $d) | {thread_ts,parent}' "$(sk_box "$ROOT")/to-lane.jsonl")" \
-  "{\"thread_ts\":\"$POST\",\"parent\":{\"ts\":\"$POST\",\"author\":\"bot\",\"excerpt\":\"The release shipped.\",\"envelope\":\"$NOTICE\"}}" "a reply under a relay notice carries its envelope"
+assert_eq "$(jq --arg d "$CH:$REPLY" --arg ts "$POST" --arg envelope "$NOTICE" 'select(.delivery_id == $d) | {thread_ts,parent} == {thread_ts:$ts,parent:{ts:$ts,author:"bot",excerpt:"The release shipped.",envelope:$envelope}}' "$(sk_box "$ROOT")/to-lane.jsonl")" \
+  "true" "a reply under a relay notice carries its envelope"
 assert_eq "$(sk_state '[.calls[] | select(. == "conversations.replies")] | length')" "0" "the relay notice parent comes from the journal without a Slack read"
 
 TOP="$(sk_inject "$CH" U001 'A new topic.')"
