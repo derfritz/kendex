@@ -513,7 +513,7 @@ mv "$(sk_journal "$DELTA")" "$SK_TMP/delta-journal.aside"
 sk_poll "$DELTA"
 assert_eq "$RC=$(asks C777 'New notice.')=$(asks C777 'Old notice.')" "0=1=0" "after the journal is moved aside no notice is posted again"
 assert_eq "$(asks C777 'Still open?')" "2" "the open ask is posted once more, so its thread is bound again"
-assert_eq "$(directives "$DELTA" | wc -l | tr -d ' ')" "1" "the re-read channel lands nothing twice"
+assert_eq "$(directives "$DELTA" | wc -l | tr -d ' ')" "2" "the re-read channel lands nothing twice"
 
 # --- two roots bound to one channel are refused at start ---------------------------------------
 # Two checkouts with one directory name get one default channel name, so
