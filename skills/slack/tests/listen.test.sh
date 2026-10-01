@@ -94,6 +94,7 @@ Cut the scanner?
 
 Options: cut, keep. Recommended: cut. It stands at " "the ask is posted with every owner mentioned, its options, recommendation and deadline, a blank line between its paragraphs"
 assert_eq "$(sk_state ".messages.C001[] | select(.ts == \"$ASK_TS\") | .body_arg")" "markdown_text" "the ask is sent as markdown_text"
+assert_eq "$(jq -r --arg id "$ASK" 'select(.t == "out" and .id == $id) | .posted_ts' "$(sk_journal "$ROOT")")" "$ASK_TS" "an ask journals its successful Slack post stamp"
 DEADLINE="$(jq -r "select(.id == \"$ASK\") | .deadline" "$(sk_box "$ROOT")/to-overseer.jsonl")"
 DEADLINE_EPOCH="$(python3 -c 'import calendar, sys, time; print(calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ")))' "$DEADLINE")"
 assert_has "$(sk_state ".messages.C001[] | select(.ts == \"$ASK_TS\") | .text")" \
@@ -477,7 +478,7 @@ while read -r name age posted active mutant want_out want_root want_posts; do
   if [ "$age" = old ]; then
     sk_age_envelope "$RET" "$NOTE_ID" $((8 * 86400))
     NOTE_AT="$(jq -r --arg id "$NOTE_ID" 'select(.id == $id) | .at' "$(sk_box "$RET")/to-overseer.jsonl")"
-    jq -c --arg id "$NOTE_ID" --arg at "$NOTE_AT" 'if .t == "out" and .id == $id then .at = $at else . end' "$(sk_journal "$RET")" > "$SK_TMP/aged.jsonl" \
+    jq -c --arg id "$NOTE_ID" --arg at "$NOTE_AT" --arg ts "$OLD_TS" 'if .t == "out" and .id == $id then .at = $at | .posted_ts = $ts else . end' "$(sk_journal "$RET")" > "$SK_TMP/aged.jsonl" \
       && cp "$SK_TMP/aged.jsonl" "$(sk_journal "$RET")"
   fi
   if [ "$active" = 1 ]; then
@@ -505,6 +506,14 @@ aged-unposted-envelope old 0 0 none 0 0 0
 control-envelope-horizon old 0 0 horizon 1 0 1
 control-live-thread-retention old 1 1 retain 0 1 1
 ROWS
+
+sk_mutant posted-ask relay.py 'thread=ts, posted_ts=ts' 'thread=ts, posted_ts="0"'
+ASK_STAMP_ROOT="$(sk_new_root ask-stamp)"
+sk_bind "$ASK_STAMP_ROOT"
+sk_lm "$ASK_STAMP_ROOT" ask --item overseer --to owner --file "$(sk_text ask-stamp 'Stamp this ask.')" >/dev/null
+sk_poll "$ASK_STAMP_ROOT"
+assert_eq "$RC=$(jq -r 'select(.t == "out" and .kind == "ask") | .posted_ts' "$(sk_journal "$ASK_STAMP_ROOT")")" "0=0" "control: the ask producer loses its landed stamp"
+sk_bin_reset
 
 # --- a journal reset re-posts open asks alone ----------------------------------------------------------
 mv "$(sk_journal "$DELTA")" "$SK_TMP/delta-journal.aside"

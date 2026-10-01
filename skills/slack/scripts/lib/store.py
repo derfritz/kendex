@@ -63,8 +63,9 @@ def root_dir(root: Path) -> Path:
 
 @dataclass
 class Binding:
-    """The channel/journal lifetime. `bound_at` stays until its journal resets;
-    catch-up excludes older messages. Delivery positions advance separately.
+    """The channel/journal lifetime. `bound_at` stays while the same channel
+    and journal are retained; catch-up excludes older messages.
+    Delivery positions advance separately.
     """
 
     channel: str
@@ -217,7 +218,9 @@ class State:
             thread_ts = str(line["thread"])
             if thread_ts not in self.threads:
                 self.threads[thread_ts] = Thread(ts=thread_ts, envelope=env_id, kind=line["kind"], open=state == "open")
-            self.threads[thread_ts].active = max(self.threads[thread_ts].active, parse_at(str(line["at"])))
+            # Older journals lack the landed stamp and retain envelope-age activity.
+            posted = float(line["posted_ts"]) if "posted_ts" in line else parse_at(str(line["at"]))
+            self.threads[thread_ts].active = max(self.threads[thread_ts].active, posted)
             if "parent" in line:
                 self.threads[thread_ts].parent = line["parent"]
             self.by_envelope[env_id] = thread_ts

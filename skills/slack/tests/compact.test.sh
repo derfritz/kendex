@@ -118,6 +118,45 @@ sk_run -- compact --root "$RESUMES"
 assert_eq "$RC=$(jq -cr 'select(.t == "resume") | .skipped' "$(sk_journal "$RESUMES")")" '0=["YOUNG-SKIP"]' \
   "compaction keeps skipped ids with the young resume and drops them with the aged resume"
 
+# --- delayed posts keep old roots past envelope expiry, not past post expiry ----
+# An unread owner reply predates the post. Neither read cursor may skip it.
+# Each control removes one producer's stamp or replay's activity update.
+while read -r kind mutant want; do
+  POST_ROOT="$(sk_new_root "posted-$kind-$mutant")"
+  sk_bind "$POST_ROOT"
+  POST_CH="$(sk_channel "$POST_ROOT")"
+  sk_rebind_at "$POST_ROOT" "$OLD_TS"
+  POST_TS="$(sk_inject "$POST_CH" UBOT 'Retained ask.' '' "\"ts\": \"$OLD_TS\", \"bot_id\": \"B01\"")"
+  sk_inject "$POST_CH" U001 'Unread before the post.' "$POST_TS" "\"ts\": \"$(python3 -c 'import sys; print(float(sys.argv[1]) + 1)' "$POST_TS")\"" >/dev/null
+  sk_lm "$POST_ROOT" ask --item overseer --to owner --file "$(sk_text delayed-ask 'Retained ask.')" >"$SK_TMP/delayed-ask.out"
+  POST_ASK="$(sed 's/^id=//' "$SK_TMP/delayed-ask.out")"
+  sk_age_envelope "$POST_ROOT" "$POST_ASK" $((9 * 86400))
+  sk_lm "$POST_ROOT" resolve --item overseer --id "$POST_ASK" --text "$(sk_text delayed-answer 'Delayed ruling.')" >/dev/null
+  POST_OUT="$(jq -r --arg id "$POST_ASK" 'select(.kind == "answer" and .re == $id) | .id' "$(sk_box "$POST_ROOT")/to-lane.jsonl")"
+  if [ "$kind" = notice ]; then
+    sk_age_envelope "$POST_ROOT" "$POST_OUT" $((9 * 86400))
+    sk_lm "$POST_ROOT" notice --item overseer --to owner --ref "$POST_ASK" --file "$(sk_text delayed-notice 'Delayed ruling.')" >/dev/null
+    POST_OUT="$(jq -r 'select(.text == "Delayed ruling.") | .id' "$(sk_box "$POST_ROOT")/to-overseer.jsonl")"
+  fi
+  sk_age_envelope "$POST_ROOT" "$POST_OUT" $((6 * 86400))
+  case "$mutant" in
+    none) ;;
+    activity) sk_mutant posted-activity store.py 'float\(line\["posted_ts"\]\)' 'parse_at(str(line["at"]))' ;;
+    notice) sk_mutant posted-notice relay.py 'posted_ts=landed, \*\*fields' 'posted_ts=thread_ts or landed, **fields' ;;
+    answer) sk_mutant posted-answer relay.py 'thread=thread_ts, posted_ts=landed' 'thread=thread_ts, posted_ts=thread_ts' ;;
+    *) printf 'unknown posted activity mutant: %s\n' "$mutant" >&2; exit 1 ;;
+  esac
+  sk_post_activity "$POST_ROOT" "$POST_ASK" "$POST_OUT" "$kind" "$POST_TS"
+  assert_eq "$RC=$OUT" "0=$want" "$kind/$mutant: legacy replay, read positions, landed stamp, retained mappings, bounded reads, expiry, envelope eligibility"
+  sk_bin_reset
+done <<'ROWS'
+answer none 1=1=1=1=1=1=1
+notice none 1=1=1=1=1=1=1
+answer activity 1=1=1=0=1=1=1
+notice notice 1=1=0=0=1=1=1
+answer answer 1=1=0=0=1=1=1
+ROWS
+
 # --- controls, one per rule -------------------------------------------------------
 sk_mutant keep store.py 'if drop:\n            dropped \+= 1' 'if False:\n            dropped += 1'
 cat >> "$JOURNAL" <<EOF

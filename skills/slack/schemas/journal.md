@@ -16,7 +16,7 @@ What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bo
 |-------|-------|
 | `channel` | The Slack channel id the relay reads and posts to |
 | `channel_name` | The channel's name at binding time |
-| `bound_at` | Channel/journal lifetime start; retained by repeat setup and owner changes. Only a journal reset starts a new time |
+| `bound_at` | Channel/journal lifetime start; retained by repeat setup and owner changes while the same channel and journal are retained. Setup without a journal starts a new time |
 | `owners` | The `SLACK_OWNERS` list the ids were resolved from |
 | `owner_ids` | Email address to Slack user id, one entry per owner |
 
@@ -34,7 +34,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `resume` | `from_at`, `at`, `seen`, `skipped`, `asks` | The hold ended. `from_at` is its `hold` line's `at`; `at` is the resume poll's UTC second. `seen` is the master's mailbox line count from `to-overseer.seen`, clamped to the listed lines, or `"none"` for a missing, unreadable or invalid file. `skipped` is required, even when empty. It lists the not-yet-carried owner notice ids on lines at or below that count from the complete snapshot, even if a dead token stops an earlier post; replay adds them to the carried ids. `asks` lists open ask ids whose posts landed, never one refused or lost. Written after the posts, even if a dead token stops them. `compact` keeps the skipped ids with this line and drops it once its `at` is older than `SLACK_THREAD_DAYS` |
 | `in` | `channel`, `ts`, `kind`, `id`, `thread` | A Slack message delivered to the mailbox: `kind` is `directive` or `answer`, `id` the envelope it landed as, `thread` the parent stamp it belongs to |
 | `in` | `channel`, `ts`, `kind` = `ignored`, `reason` | A message answered once and not routed: `reason` is `not-owner`, or `no-text` for a message with no text and no file |
-| `out` | `channel`, `id`, `kind`, `state`, `at`, `thread` | A mailbox envelope posted: `kind` is `ask`, `notice` or `answer`; `state` is `open` for an ask awaiting its answer, `resolved` otherwise; `thread` the stamp the post is under, the ask's own for an ask |
+| `out` | `channel`, `id`, `kind`, `state`, `at`, `thread`, `posted_ts` | A mailbox envelope posted: `kind` is `ask`, `notice` or `answer`; `state` is `open` for an ask awaiting its answer, `resolved` otherwise; `thread` the stamp the post is under, the ask's own for an ask; `posted_ts` the successful text post's Slack stamp, used for thread activity. Older lines without `posted_ts` use envelope `at` as activity |
 | `out` | `channel`, `id`, `kind` = `notice`, `state` = `file`, `at`, `file` | A report uploaded; its thread is bound by a later `bound` line |
 | `out` | `channel`, `id`, `kind`, `state` = `unknown`, `at` | A post whose response was lost; shown by `--status`, never repeated. A post Slack refused or never received has no line: the next poll makes it again |
 | `out` | `channel`, `id`, `kind`, `state` = `refused`, `at`, `reason` | A post refused before sending; `reason` is the refusal key, `secret-value` or `file-unreadable` |
@@ -47,7 +47,7 @@ Every line carries `t`, its kind. The relay replays the file at start; a line of
 | `disconnect` | `at`, `reason` | The connection closed at `at`. `reason` is `slack-<reason>` for Slack's own `disconnect` envelope, such as `slack-refresh_requested`, or the client's cause, such as `connection ended` or `no frame in 60s` |
 | `reconnect` | `at` | A later connection is open; the next poll reads the channel's history, which delivers what was sent while the relay was disconnected |
 
-Stamps (`ts`, `thread`, `seen`) are Slack message stamps, seconds with six decimals; `at` is the UTC second `lane-mail` writes, or the relay's clock on a connection line. `compact` drops a connection line once its `at` is older than `SLACK_THREAD_DAYS`; the connection lines of one relay are written to the journal of every root it serves, and replay reads nothing from them. Every inbound delivery hands `lane-mail` the key `channel:ts`. Every `out` line carries its envelope's `at`. An envelope whose `at` is older than `SLACK_THREAD_DAYS` is never posted, and `compact` judges an `out` line by that same `at`, never by its `thread`, so a line it drops is one whose envelope can never post again.
+Stamps (`ts`, `thread`, `seen`, `posted_ts`) are Slack message stamps, seconds with six decimals; `at` is the UTC second `lane-mail` writes, or the relay's clock on a connection line. `compact` drops a connection line once its `at` is older than `SLACK_THREAD_DAYS`; the connection lines of one relay are written to the journal of every root it serves, and replay reads nothing from them. Every inbound delivery hands `lane-mail` the key `channel:ts`. Every `out` line carries its envelope's `at`. An envelope whose `at` is older than `SLACK_THREAD_DAYS` is never posted, and `compact` judges an `out` line by that same `at`, never by its `thread`, so a line it drops is one whose envelope can never post again.
 
 ### Parent pointers
 

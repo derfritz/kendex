@@ -242,6 +242,69 @@ for name in ("to-overseer.jsonl", "to-lane.jsonl"):
 PY
 }
 
+# sk_post_activity ROOT ASK_ID OUT_ID KIND ROOT_TS: delayed outbound text
+# through the real relay and API, then daily compaction on an injected clock.
+# The mailbox's resolve and referenced notice are the outbound producers.
+sk_post_activity() {
+  RC=0
+  OUT="$(env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    SLACK_BOT_TOKEN="$SK_TOKEN" SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+    python3 - "${SK_BIN%/*}/lib" "$@" <<'PY'
+import json, sys, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from relay import RootRelay
+from settings import load
+from store import parse_at, format_at
+from verbs import api_for
+
+root, ask_id, out_id, kind, root_ts = sys.argv[2:]
+now = [time.time()]
+settings = load()
+relay = RootRelay(Path(root), settings, api_for(settings), lambda: now[0])
+events = relay.mail.events()
+ask = next(e for e in events if e["id"] == ask_id)
+envelope = next(e for e in events if e["id"] == out_id)
+messages = relay.api.get("conversations.replies", channel=relay.channel, ts=root_ts)["messages"]
+parent = relay.parent_of(next(m for m in messages if m["ts"] == root_ts), "bot", ask_id)
+# A retained root from a journal written before posted_ts existed.
+relay.journal.append(t="seen", ts=root_ts)
+relay.journal.append(t="start", at="", ids=[])
+relay.journal.append(t="out", channel=relay.channel, id=ask_id, kind="ask", state="open",
+                     at=ask["at"], thread=root_ts, parent=parent)
+legacy = relay.state.threads[root_ts].active == parse_at(ask["at"])
+relay.journal.append(t="thread", ts=root_ts, seen=root_ts)
+if kind == "notice":
+    relay.journal.append(t="resolved", id=ask_id)
+# The master hold ends after this envelope waited six days.
+relay.journal.append(t="hold", at=envelope["at"])
+relay.resume(events)
+positions = relay.state.seen_ts == root_ts and relay.state.threads[root_ts].seen == root_ts
+lines = [json.loads(raw) for raw in relay.journal.path.read_text().splitlines()]
+out = next(line for line in lines if line.get("t") == "out" and line.get("id") == out_id)
+messages = relay.api.get("conversations.replies", channel=relay.channel, ts=root_ts)["messages"]
+landed = next(m["ts"] for m in messages if m.get("bot_id") and m["ts"] != root_ts)
+posted = out.get("posted_ts") == landed and out["at"] == envelope["at"] and out["thread"] == root_ts
+now[0] = float(landed) + 2 * 86400
+relay.compacted_day = "2000-01-01"
+relay.compact_daily(format_at(now[0])[:10])
+thread = relay.state.threads.get(root_ts)
+retained = (thread is not None and thread.envelope == ask_id and thread.parent == parent
+            and relay.state.by_envelope.get(ask_id) == root_ts
+            and relay.state.by_envelope.get(out_id) == root_ts
+            and {ask_id, out_id} <= relay.state.carried)
+# Retention never admits this closed old root to reconnect reads.
+bounded = not relay.live(thread) if thread is not None else True
+now[0] = float(landed) + 8 * 86400
+relay.compact_daily(format_at(now[0])[:10])
+expired = (root_ts not in relay.state.threads and ask_id not in relay.state.by_envelope
+           and out_id not in relay.state.by_envelope)
+eligible = dict((e["id"], route) for e, route in relay.routes(events)).get(out_id) == "skip"
+print("=".join(str(int(value)) for value in (legacy, positions, posted, retained, bounded, expired, eligible)))
+PY
+  )" || RC=$?
+}
+
 # sk_mutant NAME FILE PATTERN REPLACEMENT — SK_BIN becomes a copy of scripts/
 # with exactly one occurrence of PATTERN (a Python regex) replaced.
 sk_mutant() {

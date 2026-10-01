@@ -634,7 +634,7 @@ class RootRelay:
         ts = self._send(envelope, "ask", "\n\n".join(lines), None)
         if ts is None:
             return False
-        self._out(envelope, "ask", "open", thread=ts,
+        self._out(envelope, "ask", "open", thread=ts, posted_ts=ts,
                   parent=self.parent_of({"ts": ts, "text": "\n\n".join(lines)}, "bot", str(envelope["id"])))
         return True
 
@@ -650,7 +650,7 @@ class RootRelay:
         else:
             fields = {} if thread_ts else {"parent": self.parent_of(
                 {"ts": landed, "text": envelope.get("text", "")}, "bot", str(envelope["id"]))}
-            self._out(envelope, "notice", "resolved", thread=thread_ts or landed, **fields)
+            self._out(envelope, "notice", "resolved", thread=thread_ts or landed, posted_ts=landed, **fields)
 
     def post_answer(self, envelope: Dict) -> None:
         ask_id = str(envelope.get("re", ""))
@@ -662,8 +662,9 @@ class RootRelay:
             text = f"No answer by the deadline: {envelope.get('text', '')} stands."
         else:
             text = f"Answered in the chat: {envelope.get('text', '')}"
-        if self._send(envelope, "answer", text, thread_ts) is not None:
-            self._out(envelope, "answer", "resolved", thread=thread_ts)
+        landed = self._send(envelope, "answer", text, thread_ts)
+        if landed is not None:
+            self._out(envelope, "answer", "resolved", thread=thread_ts, posted_ts=landed)
             self.journal.append(t="resolved", id=ask_id)
 
     # -- the record --status reads --------------------------------------------
