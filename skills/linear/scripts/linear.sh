@@ -28,11 +28,10 @@ Resources:
   cycles          Cycle operations (list, create, update)
   statuses        Workflow state operations (list, get)
   documents       Document operations (list, get)
+  attachments     Live attachment inventory and explicit downloads (list, fetch)
   session-status  Aggregated session status for /start workflow
   auth-check      Credential, actor and team preflight (--strict fails with no team)
   auth-mint       Mint app token JSON from the client pair without writing files
-  sync            Sync Linear data to local cache
-  cache           Query local cache (issues, projects, cycles, initiatives, comments, labels)
 
 Examples:
   # Issues with parent/sub-issues and relations
@@ -67,7 +66,7 @@ Environment:
                   App credentials in .env.local. Together they win over the key
                   when no app token is set. Tokens use fixed scope read,write.
                   auth-mint prints access_token and expires_at without caching;
-                  the pair's API path caches and renews its own token.
+                  the pair's API path mints per invocation without a token store.
   LINEAR_API_KEY  Fallback. Set in .env.local; a key from project files wins
                   over a plain environment export (auth-check warns when they
                   differ). LINEAR_API_KEY_OVERRIDE overrides personal-key
@@ -104,13 +103,11 @@ case "$resource" in
 esac
 
 case "$resource" in
-    sync)
-        exec "$BASH" "$SCRIPT_DIR/commands/sync.sh" "$@"
+    sync|cache)
+        printf '%s\n' "linear: removed=$resource replacement=linear.sh <resource> <action> (live API)" >&2
+        exit 1
         ;;
-    cache)
-        exec "$BASH" "$SCRIPT_DIR/commands/cache-query.sh" "$@"
-        ;;
-    issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|session-status|auth-check|auth-mint)
+    issues|comments|projects|initiatives|milestones|labels|project-labels|teams|users|cycles|statuses|documents|attachments|session-status|auth-check|auth-mint)
         script="$SCRIPT_DIR/commands/${resource}.sh"
         if [ -f "$script" ]; then
             exec "$BASH" "$script" "$@"

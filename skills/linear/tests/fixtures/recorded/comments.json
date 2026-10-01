@@ -1,0 +1,67 @@
+{
+  "issue": {
+    "id": "331dcf04-0d3c-4236-8a8a-0fcaf29e6aa1",
+    "comments": {
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "1e4aaa56-5284-4bc3-a291-26485e34fd35"
+      },
+      "nodes": [
+        {
+          "id": "ea64252f-73ee-43ec-8bc9-c046091ba1cd",
+          "body": "Fixture",
+          "createdAt": "2026-10-01T19:05:08.666Z",
+          "updatedAt": "2026-10-01T19:05:08.632Z",
+          "user": {
+            "name": "Fixture"
+          }
+        },
+        {
+          "id": "ddcbc4af-d6ac-4ec9-9218-77ac5ff697c8",
+          "body": "Fixture",
+          "createdAt": "2026-10-01T18:36:43.489Z",
+          "updatedAt": "2026-10-01T18:36:43.463Z",
+          "user": {
+            "name": "Fixture"
+          }
+        },
+        {
+          "id": "d377675d-a777-410c-8456-c6dd06fbc450",
+          "body": "Fixture",
+          "createdAt": "2026-10-01T09:36:28.158Z",
+          "updatedAt": "2026-10-01T09:36:28.124Z",
+          "user": {
+            "name": "Fixture"
+          }
+        },
+        {
+          "id": "b4efae70-b3b5-48de-984a-050388444c77",
+          "body": "Fixture",
+          "createdAt": "2026-10-01T09:04:02.716Z",
+          "updatedAt": "2026-10-01T09:04:02.694Z",
+          "user": {
+            "name": "Fixture"
+          }
+        },
+        {
+          "id": "6b732030-383f-4444-83b9-ab8084526b30",
+          "body": "Fixture",
+          "createdAt": "2026-09-30T23:55:19.592Z",
+          "updatedAt": "2026-09-30T23:55:19.571Z",
+          "user": {
+            "name": "Fixture"
+          }
+        },
+        {
+          "id": "1e4aaa56-5284-4bc3-a291-26485e34fd35",
+          "body": "Fixture",
+          "createdAt": "2026-09-30T23:48:06.509Z",
+          "updatedAt": "2026-09-30T23:48:06.484Z",
+          "user": {
+            "name": "Fixture"
+          }
+        }
+      ]
+    }
+  }
+}

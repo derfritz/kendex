@@ -2,8 +2,8 @@
 # Linear CLI - Output Formatters
 set -euo pipefail
 
-readonly ISSUE_BLOCKS_FIELDS='relations { nodes { id type relatedIssue { id identifier title state { name type } } } }'
-readonly ISSUE_BLOCKED_BY_FIELDS='inverseRelations { nodes { id type issue { id identifier title state { name type } } } }'
+readonly ISSUE_BLOCKS_FIELDS='relations(first: 10) { pageInfo { hasNextPage endCursor } nodes { id type relatedIssue { id identifier title state { name type } } } }'
+readonly ISSUE_BLOCKED_BY_FIELDS='inverseRelations(first: 10) { pageInfo { hasNextPage endCursor } nodes { id type issue { id identifier title state { name type } } } }'
 readonly ISSUE_RELATION_FIELDS="$ISSUE_BLOCKS_FIELDS $ISSUE_BLOCKED_BY_FIELDS"
 readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);
@@ -418,7 +418,7 @@ format_initiative_single() {
     }'
 }
 
-# One comment's safe shape. `comments list` and `cache comments bulk-list`
+# One comment's safe shape. `comments list` and `comments bulk-list`
 # both emit it, so the two cannot drift apart.
 readonly COMMENT_SAFE_JQ='
 def comment_safe: {
@@ -677,4 +677,9 @@ format_project_labels_list() {
         parent: (.parent.name // ""),
         created_at: (.createdAt // "")
     }]'
+}
+
+# Remove request-only page metadata from public raw and mutation output.
+linear_public_result() {
+    jq 'walk(if type == "object" then del(.pageInfo) else . end)' <<<"$1"
 }

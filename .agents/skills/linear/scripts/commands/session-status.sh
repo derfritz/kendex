@@ -1,6 +1,6 @@
 #!/bin/bash
 # Linear GraphQL API - Session Status (aggregated queries for /start workflow)
-# Reads entirely from local cache — zero API calls
+# Reads complete live inventories through the shared GraphQL helper.
 # Usage: session-status.sh [options]
 
 set -euo pipefail
@@ -47,8 +47,7 @@ EOF
 case "${1:-}" in help|--help|-h) show_help; exit 0 ;; esac
 
 source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
-source "$SCRIPT_DIR/../lib/cache-dates.sh"
+source "$SCRIPT_DIR/../lib/cycle-dates.sh"
 
 get_session_status() {
     local research_days=7
@@ -63,29 +62,31 @@ get_session_status() {
         esac
     done
 
-    # Auto-sync guard: ensure cache is reasonably fresh
-    if ! cache_is_fresh 15; then
-        echo "Cache stale or missing, syncing..." >&2
-        "$BASH" "$SCRIPT_DIR/sync.sh" 2>&1 | while read -r line; do echo "  $line" >&2; done
-    fi
-
-    # Calculate date threshold for research
-    local research_date
-    research_date=$(cache_utc_days_ago "$research_days")
-
-    # =========================================================================
-    # All data read from cache — zero API calls
-    # =========================================================================
-
-    local issues_file="$CACHE_DIR/issues.json"
-    local projects_file="$CACHE_DIR/projects.json"
-    local cycles_file="$CACHE_DIR/cycles.json"
+    linear_require_pattern --research-days "$research_days" '^[0-9]+$' 'a non-negative day count' || return 1
+    local research_date all_issues all_projects all_cycles result
+    research_date=$(linear_utc_days_ago "$research_days") || return 1
+    result=$("$BASH" "$SCRIPT_DIR/issues.sh" list --max --format=raw) || return 1
+    all_issues=$(jq -ce '.issues.nodes | arrays' <<<"$result") || return 1
+    local query='query SessionProjects($after: String) {
+        projects(first: 25, after: $after) {
+            pageInfo { hasNextPage endCursor }
+            nodes { id name description state priority progress sortOrder
+                labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
+                relations(first: 10) { pageInfo { hasNextPage endCursor } nodes { id type relatedProject { id name state progress } } }
+                inverseRelations(first: 10) { pageInfo { hasNextPage endCursor } nodes { id type project { id name state progress } } }
+            }
+        }
+    }'
+    result=$(graphql_pages "$query" '{}' projects) || return 1
+    all_projects=$(jq -ce '.projects.nodes | arrays' <<<"$result") || return 1
+    result=$("$BASH" "$SCRIPT_DIR/cycles.sh" list --max --format=raw) || return 1
+    all_cycles=$(jq -ce '.cycles.nodes | arrays | sort_by(.startsAt)' <<<"$result") || return 1
 
     # --- Research (was Q1 + Q2) ---
     # Research: completed issues with research label, updated within threshold
     local research_json
     research_json=$(jq --arg date "$research_date" '
-        # All issues in cache
+        # All issues in the live inventory
         . as $all |
 
         # Completed research issues updated recently
@@ -112,7 +113,7 @@ get_session_status() {
                 [(.relations.nodes // [])[] | select(.type == "blocks") | .relatedIssue] as $blocked_refs |
                 $blocked_refs[] |
                 .identifier as $blocked_id |
-                # Find the actual blocked issue in our cache
+                # Find the actual blocked issue in the live inventory
                 ($all[] | select(.identifier == $blocked_id)) as $blocked_issue |
                 # Only check active issues
                 select($blocked_issue.state.type != "completed" and $blocked_issue.state.type != "canceled") |
@@ -121,7 +122,7 @@ get_session_status() {
                 {research_id: $research_id, research_title: $research_title, blocked_id: $blocked_id, blocked_title: ($blocked_issue.title // "")}
             ] | unique
         }
-    ' "$issues_file")
+    ' <<<"$all_issues")
 
     # --- Active projects (was Q3) ---
     # All started projects with dependencies, sorted by priority (urgent first, none last)
@@ -146,7 +147,7 @@ get_session_status() {
             .project |
             {id, name, state, progress}
         ]
-    }] | sort_by(if .priority == 0 then 5 else .priority end)' "$projects_file")
+    }] | sort_by(if .priority == 0 then 5 else .priority end)' <<<"$all_projects")
     # Collect project IDs for issue filtering
     local project_ids
     project_ids=$(echo "$projects_json" | jq -r '[.[].id] | join(",")')
@@ -188,7 +189,7 @@ get_session_status() {
             ],
             ready: is_ready
         }] | sort_by(.sort_order)
-    ' "$projects_file")
+    ' <<<"$all_projects")
 
     # --- Cycles (was Q3c) ---
     # Date-based selection through the shared cache helpers: working = most
@@ -196,14 +197,12 @@ get_session_status() {
     # no cycle is running. Reading a position in the list instead — `last` for
     # previous, `first` for next — inverted both answers between cycles, and
     # this is the read cycle planning consumes.
-    local all_cycles
-    all_cycles=$(jq 'sort_by(.startsAt)' "$cycles_file")
     local working_cycle_json
-    working_cycle_json=$(cache_working_cycle <<<"$all_cycles")
+    working_cycle_json=$(linear_working_cycle <<<"$all_cycles")
     local prev_cycle_json
-    prev_cycle_json=$(cache_cycles_before "$working_cycle_json" <<<"$all_cycles" | jq 'first // null')
+    prev_cycle_json=$(linear_cycles_before "$working_cycle_json" <<<"$all_cycles" | jq 'first // null')
     local next_cycle_json
-    next_cycle_json=$(cache_cycles_after "$working_cycle_json" <<<"$all_cycles" | jq 'first // null')
+    next_cycle_json=$(linear_cycles_after "$working_cycle_json" <<<"$all_cycles" | jq 'first // null')
 
     # --- Project issues categorized (was Q4) ---
     # Aggregate from ALL started projects, tag each issue with project_name
@@ -232,8 +231,8 @@ get_session_status() {
             def has_label($name): [(.labels.nodes // [])[] | .name] | any(. == $name);
             # Helper: check if issue is a sub-issue (has parent)
             def is_sub_issue: .parent != null;
-            # Helper: recursively flatten children from cache (not nested GraphQL)
-            def cache_children(depth):
+            # Helper: recursively flatten children from the live inventory (not nested GraphQL)
+            def linear_children(depth):
                 if depth >= 3 then [] else
                     .identifier as $pid |
                     [$all[] | select(.parent.identifier == $pid)] |
@@ -244,11 +243,11 @@ get_session_status() {
                         state_type: ($c.state.type // ""),
                         agent: (([$c.labels.nodes[]? | .name | select(startswith("agent:"))] | first // "none") | gsub("^agent:"; "")),
                         depth: depth
-                    }] + ($c | cache_children(depth + 1))) | flatten
+                    }] + ($c | linear_children(depth + 1))) | flatten
                 end;
             # Helper: calculate children progress
             def children_progress:
-                cache_children(0) |
+                linear_children(0) |
                 if length > 0 then
                     . as $all |
                     {
@@ -322,7 +321,7 @@ get_session_status() {
                     format_issue
                 ] | sort_by(.priority)
             }
-        ' "$issues_file")
+        ' <<<"$all_issues")
     fi
 
     # --- PR blockers (was Q5) ---
@@ -330,8 +329,8 @@ get_session_status() {
     pr_blockers_json=$(jq '
         . as $all |
 
-        # Recursive children from cache
-        def cache_children_flat(depth):
+        # Recursive children from the live inventory
+        def linear_children_flat(depth):
             if depth >= 3 then [] else
                 .identifier as $pid |
                 [$all[] | select(.parent.identifier == $pid)] |
@@ -343,14 +342,14 @@ get_session_status() {
                     agent: (([($c.labels.nodes // [])[] | .name | select(startswith("agent:"))] | first) // "none"),
                     priority: ($c.priority // 0),
                     depth: depth
-                }] + ($c | cache_children_flat(depth + 1))) | flatten
+                }] + ($c | linear_children_flat(depth + 1))) | flatten
             end;
 
         [
             .[] |
             select(.parent != null) |
             select(.state.type != "completed" and .state.type != "canceled") |
-            # Find parent in cache to check its state
+            # Find parent in the live inventory to check its state
             .parent.identifier as $parent_id |
             ($all[] | select(.identifier == $parent_id)) as $parent_issue |
             select($parent_issue.state.name == "In Review") |
@@ -364,12 +363,12 @@ get_session_status() {
                 parent_id: .parent.identifier,
                 parent_title: ($parent_issue.title // ""),
                 children: (
-                    cache_children_flat(0) |
+                    linear_children_flat(0) |
                     [.[] | select(.state_type != "completed" and .state_type != "canceled")]
                 )
             }
         ]
-    ' "$issues_file")
+    ' <<<"$all_issues")
 
     # Determine which projects have active work (Todo, Backlog, or In Progress issues)
     local projects_with_work

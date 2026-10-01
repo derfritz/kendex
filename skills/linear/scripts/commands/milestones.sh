@@ -64,8 +64,9 @@ list_milestones() {
     # If no project specified, list all milestones across all projects
     if [ -z "$project" ]; then
         local query='
-        query GetAllMilestones {
-            projectMilestones(first: 100) {
+        query GetAllMilestones($after: String) {
+            projectMilestones(first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     name
@@ -78,7 +79,7 @@ list_milestones() {
                 }
             }
         }'
-        result=$(graphql_query "$query" "{}")
+        result=$(graphql_pages "$query" "{}" "projectMilestones")
     else
         # resolve_project_id names the failure itself — not found, only-canceled
         # matches, or an API failure — so it is not re-reported here.
@@ -88,8 +89,9 @@ list_milestones() {
         fi
 
         local query='
-        query GetProjectMilestones($projectId: String!) {
-            projectMilestones(filter: {project: {id: {eq: $projectId}}}, first: 100) {
+        query GetProjectMilestones($projectId: String!, $after: String) {
+            projectMilestones(filter: {project: {id: {eq: $projectId}}}, first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     name
@@ -104,13 +106,13 @@ list_milestones() {
         }'
 
         local variables="{\"projectId\": \"$project_id\"}"
-        result=$(graphql_query "$query" "$variables")
+        result=$(graphql_pages "$query" "$variables" "projectMilestones")
     fi
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_milestones_list "$result"
@@ -149,6 +151,7 @@ get_milestone() {
             updatedAt
             project { id name }
             issues(first: 20) {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     identifier
@@ -166,7 +169,7 @@ get_milestone() {
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_milestone_single "$result"

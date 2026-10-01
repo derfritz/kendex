@@ -37,7 +37,6 @@ run_update() {
             # shellcheck disable=SC1090
             source "$issues_sh"
             get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
-            attach_download_from_text() { :; }
             graphql_query() {
                 printf "%s" "$2" >"$capture"
                 printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{\"id\":\"uuid-1\",\"identifier\":\"CC-1\",\"title\":\"t\",\"estimate\":null,\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"}}}}"
@@ -99,7 +98,7 @@ assert "--clear-estimate with --estimate 0 builds estimate: null" \
 # --- cache write-through reflects the cleared value -----------------------
 cache_dir="$TMP/cache"
 mkdir -p "$cache_dir"
-printf '%s' '[{"id":"uuid-1","identifier":"CC-1","title":"t","estimate":3,"state":{"name":"Todo","type":"unstarted"},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}]' >"$cache_dir/issues.json"
+printf '%s' '[{"id":"uuid-1","identifier":"CC-1","title":"t","estimate":3,"state":{"name":"Todo","type":"unstarted"},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}]' >"$cache_dir/issues.json"
 LINEAR_API_KEY_OVERRIDE=test-token \
     bash -uo pipefail -c '
         cd "$TMP"
@@ -110,7 +109,6 @@ LINEAR_API_KEY_OVERRIDE=test-token \
         # cache.sh fixes CACHE_DIR at source time; point it at the test cache.
         CACHE_DIR="$cache_dir"
         get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
-        attach_download_from_text() { :; }
         graphql_query() {
             printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{\"id\":\"uuid-1\",\"identifier\":\"CC-1\",\"title\":\"t\",\"estimate\":null,\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"},\"relations\":{\"nodes\":[]},\"inverseRelations\":{\"nodes\":[]}}}}"
         }
@@ -130,7 +128,6 @@ out="$(
             # shellcheck disable=SC1090
             source "$issues_sh"
             get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
-            attach_download_from_text() { :; }
             graphql_query() {
                 printf "%s" "$2" >"$capture"
                 printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{\"id\":\"uuid-1\",\"identifier\":\"CC-1\",\"title\":\"t\",\"estimate\":null,\"state\":{\"name\":\"Todo\",\"type\":\"unstarted\"}}}}"
@@ -151,7 +148,6 @@ out="$(
             # shellcheck disable=SC1090
             source "$issues_sh"
             get_issue() { printf "%s" "{\"issue\":{\"team\":{\"name\":\"Test\"}}}"; }
-            attach_download_from_text() { :; }
             graphql_query() { printf "%s" "{\"issueUpdate\":{\"success\":true,\"issue\":{}}}"; }
             bulk_update_issues CC-1 --estimate 6
         ' _ "$ISSUES_SH" 2>/dev/null

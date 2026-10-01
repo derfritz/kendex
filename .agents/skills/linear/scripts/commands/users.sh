@@ -37,12 +37,14 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 list_users() {
     local first=75
+    local total_limit=75
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --max) total_limit=0; shift ;;
             --limit)
-                first="$2"
+                first="$2"; total_limit="$2"
                 shift 2
                 ;;
             --format) FORMAT="$2"; shift 2 ;;
@@ -54,8 +56,9 @@ list_users() {
     done
 
     local query='
-    query ListUsers($first: Int) {
-        users(first: $first) {
+    query ListUsers($first: Int, $after: String) {
+        users(first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -68,14 +71,16 @@ list_users() {
         }
     }'
 
+    linear_require_pattern --limit "$first" '^[0-9]+$' 'a non-negative integer' || return 1
+    if (( first > 50 )); then first=50; fi
     local variables="{\"first\": $first}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" "users" "$total_limit")
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_users_list "$result"
@@ -112,7 +117,7 @@ get_user() {
                 displayName
                 active
                 admin
-                teams { nodes { name } }
+                teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
                 createdAt
             }
         }'
@@ -127,7 +132,7 @@ get_user() {
                 displayName
                 active
                 admin
-                teams { nodes { name } }
+                teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { name } }
                 createdAt
             }
         }'
@@ -138,7 +143,7 @@ get_user() {
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_user_single "$result"

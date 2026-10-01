@@ -1,0 +1,29 @@
+{
+  "teams": {
+    "nodes": [
+      {
+        "id": "5a0b4b80-2343-4686-baa1-03bc5cccf045",
+        "name": "Fixture",
+        "key": "TLK",
+        "description": null,
+        "members": {
+          "nodes": [
+            {
+              "name": "Fixture",
+              "email": "fixture@example.invalid"
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          }
+        },
+        "createdAt": "2026-09-30T07:50:42.760Z"
+      }
+    ],
+    "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+    }
+  }
+}

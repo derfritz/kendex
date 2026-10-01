@@ -35,12 +35,14 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 list_teams() {
     local first=75
+    local total_limit=75
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --max) total_limit=0; shift ;;
             --limit)
-                first="$2"
+                first="$2"; total_limit="$2"
                 shift 2
                 ;;
             --format) FORMAT="$2"; shift 2 ;;
@@ -52,27 +54,30 @@ list_teams() {
     done
 
     local query='
-    query ListTeams($first: Int) {
-        teams(first: $first) {
+    query ListTeams($first: Int, $after: String) {
+        teams(first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
                 key
                 description
-                members { nodes { name email } }
+                members(first: 10) { pageInfo { hasNextPage endCursor } nodes { name email } }
                 createdAt
             }
         }
     }'
 
+    linear_require_pattern --limit "$first" '^[0-9]+$' 'a non-negative integer' || return 1
+    if (( first > 50 )); then first=50; fi
     local variables="{\"first\": $first}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" "teams" "$total_limit")
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_teams_list "$result"
@@ -82,7 +87,7 @@ list_teams() {
 
 team_keys() {
     local result
-    result=$(graphql_query 'query TeamKeys { organization { urlKey teams { nodes { key } } } }' '{}') || return $?
+    result=$(graphql_query 'query TeamKeys { organization { urlKey teams(first: 10) { pageInfo { hasNextPage endCursor } nodes { key } } } }' '{}') || return $?
     jq -e '{urlKey: .organization.urlKey, keys: [.organization.teams.nodes[].key]}' <<<"$result"
 }
 
@@ -108,9 +113,9 @@ get_team() {
     local team_id="$team_ref"
     if ! [[ "$team_ref" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
         # Look up by name
-        local lookup_query='query GetTeamByName($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
+        local lookup_query='query GetTeamByName($name: String!, $after: String) { teams(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
         local lookup_result
-        lookup_result=$(graphql_query "$lookup_query" "{\"name\": \"$team_ref\"}")
+        lookup_result=$(graphql_pages "$lookup_query" "{\"name\": \"$team_ref\"}" teams)
         team_id=$(echo "$lookup_result" | jq -r '.teams.nodes[0].id // empty')
         if [ -z "$team_id" ]; then
             echo "{\"error\": \"Team not found: $team_ref\"}" >&2
@@ -125,9 +130,9 @@ get_team() {
             name
             key
             description
-            members { nodes { name email } }
-            labels { nodes { name color } }
-            states { nodes { name type position } }
+            members(first: 10) { pageInfo { hasNextPage endCursor } nodes { name email } }
+            labels(first: 10) { pageInfo { hasNextPage endCursor } nodes { name color } }
+            states(first: 10) { pageInfo { hasNextPage endCursor } nodes { name type position } }
             createdAt
             updatedAt
         }
@@ -140,7 +145,7 @@ get_team() {
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_team_single "$result"

@@ -4,6 +4,10 @@ Multi-step issue/project transitions built from the `linear` skill's commands. C
 
 Every state change that reflects a decision (cancel, absorb, rescope, reparent, reprioritize) gets a comment recording why in the same step.
 
+## Quota holds
+
+When a read or write reports `Rate limited`, keep the exact command and any owed activation or completion body under `tmp/`. Read `Requests-Reset` from the error. Wait until that time through orch's [job runner](../../orch/references/waiter-launch.md), then retry the plain command once. Preserve both receipts. A quota hold is pending work, not a failed workflow step. A second quota error returns the held write to the caller.
+
 ## State Transitions
 
 ```bash
@@ -21,7 +25,7 @@ Cancel, duplicate, and absorb are all `comments create` + `issues update --state
 
 Write multiline or markdown bodies to a file and pass `--description-file` / `--body-file`. Inline `--description`/`--body` is for short plain strings only; never use heredocs.
 
-After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `cache issues get [PARENT_ID] --with-bundle`), preserving sections that are still valid.
+After adding, removing, or reordering children, rebuild the parent's description from its actual `children[]` (read it with `issues get [PARENT_ID] --with-bundle`), preserving sections that are still valid.
 
 ## Hierarchy and Relations
 
@@ -44,7 +48,6 @@ Never drop a valid dependency. Lift child-level dependencies to the parent level
 
 Before any create or label update from a workflow:
 
-1. `scripts/linear.sh sync --reconcile` when the cache is missing or stale, then `scripts/linear.sh cache labels list --format=safe`.
 2. Build the full final set from the project's taxonomy, rejecting unknown labels, parent/group labels (`is_group: true`), missing required categories, and exclusive-category conflicts.
 3. Ask for explicit authorization before creating any missing label; never create labels automatically.
 

@@ -1,0 +1,86 @@
+{
+  "issue": {
+    "id": "331dcf04-0d3c-4236-8a8a-0fcaf29e6aa1",
+    "identifier": "KEN-1",
+    "title": "Fixture",
+    "description": "Fixture",
+    "state": {
+      "name": "Fixture",
+      "type": "started"
+    },
+    "assignee": null,
+    "project": {
+      "id": "84dff092-534c-4f71-bcea-3f56b301ab8f",
+      "name": "Fixture"
+    },
+    "projectMilestone": null,
+    "cycle": {
+      "id": "8921acaa-9f02-4ded-845d-9df31dc1ecbf",
+      "name": null,
+      "number": 5
+    },
+    "team": {
+      "name": "Fixture"
+    },
+    "labels": {
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "ffe14296-09dd-4fa7-a53e-3da3515a3e0f"
+      },
+      "nodes": [
+        {
+          "name": "Fixture"
+        },
+        {
+          "name": "Fixture"
+        }
+      ]
+    },
+    "priority": 2,
+    "estimate": 5,
+    "sortOrder": -628558,
+    "url": "https://linear.app/fixture",
+    "branchName": "Fixture",
+    "createdAt": "2026-09-30T23:34:59.233Z",
+    "updatedAt": "2026-10-01T19:05:08.632Z",
+    "archivedAt": null,
+    "trashed": null,
+    "parent": null,
+    "children": {
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+      },
+      "nodes": []
+    },
+    "syncedWith": [],
+    "relations": {
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": null
+      },
+      "nodes": []
+    },
+    "inverseRelations": {
+      "pageInfo": {
+        "hasNextPage": false,
+        "endCursor": "a0c7564b-9ddb-402d-a094-3ed514e724cb"
+      },
+      "nodes": [
+        {
+          "id": "a0c7564b-9ddb-402d-a094-3ed514e724cb",
+          "type": "related",
+          "issue": {
+            "id": "3c5de65a-738f-41d7-885d-80144cf9e81b",
+            "identifier": "KEN-1",
+            "title": "Fixture",
+            "state": {
+              "name": "Fixture",
+              "type": "backlog"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

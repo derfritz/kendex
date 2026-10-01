@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Selected Linear credential and its short-lived OAuth token cache.
+# Selected Linear credential. Tokens stay in memory for one invocation.
 
 set -euo pipefail
 
@@ -73,33 +73,9 @@ linear_authorization() (
         return 0
     fi
 
-    # Reuse the cache library's root resolution, including LINEAR_CACHE_ROOT.
-    source "$_LIB_DIR/cache.sh" || return 1
-    local identity now token_file cached token staged
-    identity=$(linear_key_fingerprint "$LINEAR_CLIENT_ID:$LINEAR_CLIENT_SECRET") || return 1
-    token_file="$CACHE_DIR/oauth/$identity.json"
-    now=$(date +%s) || return 1
-    if [[ "${1:-}" != "renew" && -f "$token_file" ]]; then
-        cached=$(cat -- "$token_file") || return 1
-        # Linear supplies expires_in; the margin avoids expiring in transit.
-        if token=$(jq -er --argjson now "$now" '
-            select(.expires_at | type == "number" and . == floor) |
-            select(.expires_at > ($now + 60)) | .access_token |
-            select(type == "string" and length > 0)' <<<"$cached"); then
-            printf 'Bearer %s' "$token"
-            return 0
-        fi
-    fi
-
-    cached=$(linear_mint_token) || return 1
-    token=$(jq -r '.access_token' <<<"$cached") || return 1
-    # Atomic replacement keeps parallel callers from reading a partial token.
-    umask 077
-    mkdir -p -- "$CACHE_DIR/oauth" || return 1
-    staged=$(mktemp "$CACHE_DIR/oauth/.token.XXXXXX") || return 1
-    trap 'rm -f -- "${staged:?}"' EXIT
-    printf '%s\n' "$cached" >"$staged" || return 1
-    mv -f -- "$staged" "$token_file" || return 1
+    local response token
+    response=$(linear_mint_token) || return 1
+    token=$(jq -er '.access_token' <<<"$response") || return 1
     printf 'Bearer %s' "$token"
 )
 

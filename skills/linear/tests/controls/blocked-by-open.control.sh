@@ -13,8 +13,6 @@ control_replace scripts/lib/formatters.sh 1 \
 
 # 2. Call every state open, which takes the cache reads, the session status
 #    routing and the blocks projection.
-control_expect "session status routes terminal-only history to backlog"
-control_expect "session research blocks include only open targets"
 control_replace scripts/lib/formatters.sh 1 \
     'def issue_is_open: (.state.type | IN("completed", "canceled") | not);' \
     'def issue_is_open: true;'

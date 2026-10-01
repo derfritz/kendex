@@ -50,10 +50,12 @@ list_cycles() {
     local team=""
     local cycle_type=""
     local first=75
+    local total_limit=75
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --max) total_limit=0; shift ;;
             --team)
                 team="$2"
                 shift 2
@@ -63,7 +65,7 @@ list_cycles() {
                 shift 2
                 ;;
             --limit)
-                first="$2"
+                first="$2"; total_limit="$2"
                 shift 2
                 ;;
             --format) FORMAT="$2"; shift 2 ;;
@@ -81,9 +83,9 @@ list_cycles() {
     local filter_parts=()
     if [ -n "$team" ]; then
         # Get team ID
-        local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
+        local team_query='query GetTeam($name: String!, $after: String) { teams(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
         local team_result
-        team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
+        team_result=$(graphql_pages "$team_query" "{\"name\": \"$team\"}" teams)
         local team_id
         team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
         if [ -z "$team_id" ]; then
@@ -98,11 +100,14 @@ list_cycles() {
         current)
             filter_parts+=("\"isActive\": {\"eq\": true}")
             ;;
-        previous)
+        previous|past)
             filter_parts+=("\"isPast\": {\"eq\": true}")
             ;;
         next)
             filter_parts+=("\"isNext\": {\"eq\": true}")
+            ;;
+        upcoming)
+            filter_parts+=("\"isFuture\": {\"eq\": true}")
             ;;
     esac
 
@@ -112,14 +117,16 @@ list_cycles() {
     fi
 
     local query='
-    query ListCycles($filter: CycleFilter, $first: Int) {
-        cycles(filter: $filter, first: $first) {
+    query ListCycles($filter: CycleFilter, $first: Int, $after: String) {
+        cycles(filter: $filter, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 number
                 name
                 startsAt
                 endsAt
+                completedAt
                 progress
                 issueCountHistory
                 completedIssueCountHistory
@@ -128,14 +135,16 @@ list_cycles() {
         }
     }'
 
+    linear_require_pattern --limit "$first" '^[0-9]+$' 'a non-negative integer' || return 1
+    if (( first > 50 )); then first=50; fi
     local variables="{\"filter\": $filter_json, \"first\": $first}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" "cycles" "$total_limit")
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_cycles_list "$result"
@@ -187,9 +196,9 @@ create_cycle() {
     fi
 
     # Get team ID
-    local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
+    local team_query='query GetTeam($name: String!, $after: String) { teams(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
     local team_result
-    team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
+    team_result=$(graphql_pages "$team_query" "{\"name\": \"$team\"}" teams)
     local team_id
     team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
     if [ -z "$team_id" ]; then

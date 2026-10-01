@@ -41,10 +41,12 @@ source "$SCRIPT_DIR/../lib/common.sh"
 list_documents() {
     local filter_parts=()
     local first=75
+    local total_limit=75
     local format="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --max) total_limit=0; shift ;;
             --format=*) format="${1#--format=}"; shift ;;
             --format) format="$2"; shift 2 ;;
             --project)
@@ -52,7 +54,7 @@ list_documents() {
                 shift 2
                 ;;
             --limit)
-                first="$2"
+                first="$2"; total_limit="$2"
                 shift 2
                 ;;
             --) shift; break ;;
@@ -69,8 +71,9 @@ list_documents() {
     fi
 
     local query='
-    query ListDocuments($filter: DocumentFilter, $first: Int) {
-        documents(filter: $filter, first: $first) {
+    query ListDocuments($filter: DocumentFilter, $first: Int, $after: String) {
+        documents(filter: $filter, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 title
@@ -83,9 +86,11 @@ list_documents() {
         }
     }'
 
+    linear_require_pattern --limit "$first" '^[0-9]+$' 'a non-negative integer' || return 1
+    if (( first > 50 )); then first=50; fi
     local variables="{\"filter\": $filter_json, \"first\": $first}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" "documents" "$total_limit")
 
     case "$format" in
         raw) echo "$result" ;;

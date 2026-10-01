@@ -1,0 +1,1 @@
+- **Breaking:** Linear reads use all live API pages. Remove `cache`, `sync` and `LINEAR_CACHE_ROOT`. Fetch attachments to a named file. Quota errors include Requests-Reset.

@@ -1,0 +1,45 @@
+{
+  "projects": {
+    "nodes": [
+      {
+        "id": "32d34211-3442-4105-8c41-7fb43bb1c78d",
+        "name": "Fixture",
+        "description": "Fixture",
+        "content": null,
+        "state": "backlog",
+        "progress": 0.9625,
+        "health": null,
+        "priority": 0,
+        "sortOrder": -1145,
+        "targetDate": null,
+        "startDate": null,
+        "lead": null,
+        "teams": {
+          "nodes": [
+            {
+              "name": "Fixture"
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          }
+        },
+        "labels": {
+          "nodes": [],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          }
+        },
+        "url": "https://linear.app/fixture",
+        "createdAt": "2026-09-30T05:33:01.624Z",
+        "updatedAt": "2026-09-30T05:33:01.624Z"
+      }
+    ],
+    "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+    }
+  }
+}

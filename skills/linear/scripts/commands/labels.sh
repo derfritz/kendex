@@ -50,16 +50,18 @@ source "$SCRIPT_DIR/../lib/common.sh"
 list_labels() {
     local filter_parts=()
     local first=75
+    local total_limit=75
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --max) total_limit=0; shift ;;
             --team)
                 filter_parts+=("\"team\": {\"name\": {\"eq\": \"$2\"}}")
                 shift 2
                 ;;
             --limit)
-                first="$2"
+                first="$2"; total_limit="$2"
                 shift 2
                 ;;
             --format) FORMAT="$2"; shift 2 ;;
@@ -78,8 +80,9 @@ list_labels() {
     fi
 
     local query='
-    query ListLabels($filter: IssueLabelFilter, $first: Int) {
-        issueLabels(filter: $filter, first: $first) {
+    query ListLabels($filter: IssueLabelFilter, $first: Int, $after: String) {
+        issueLabels(filter: $filter, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -93,14 +96,16 @@ list_labels() {
         }
     }'
 
+    linear_require_pattern --limit "$first" '^[0-9]+$' 'a non-negative integer' || return 1
+    if (( first > 50 )); then first=50; fi
     local variables="{\"filter\": $filter_json, \"first\": $first}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" "issueLabels" "$total_limit")
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_labels_list "$result"
@@ -157,9 +162,9 @@ create_label() {
 
     # Get team ID if specified
     if [ -n "$team" ]; then
-        local team_query='query GetTeam($name: String!) { teams(filter: {name: {eq: $name}}) { nodes { id } } }'
+        local team_query='query GetTeam($name: String!, $after: String) { teams(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } } }'
         local team_result
-        team_result=$(graphql_query "$team_query" "{\"name\": \"$team\"}")
+        team_result=$(graphql_pages "$team_query" "{\"name\": \"$team\"}" teams)
         local team_id
         team_id=$(echo "$team_result" | jq -r '.teams.nodes[0].id // empty')
         if [ -z "$team_id" ]; then
@@ -171,9 +176,9 @@ create_label() {
 
     # Get parent label group ID if specified
     if [ -n "$parent" ]; then
-        local parent_query='query GetParentLabel($name: String!) { issueLabels(filter: {name: {eq: $name}}) { nodes { id isGroup } } }'
+        local parent_query='query GetParentLabel($name: String!, $after: String) { issueLabels(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isGroup } } }'
         local parent_result
-        parent_result=$(graphql_query "$parent_query" "{\"name\": \"$parent\"}")
+        parent_result=$(graphql_pages "$parent_query" "{\"name\": \"$parent\"}" issueLabels)
         local parent_id
         parent_id=$(echo "$parent_result" | jq -r '.issueLabels.nodes[0].id // empty')
         if [ -z "$parent_id" ]; then

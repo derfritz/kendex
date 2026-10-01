@@ -1,0 +1,24 @@
+{
+  "cycles": {
+    "nodes": [
+      {
+        "id": "211a13dc-08b8-47e0-8ffe-e356517851cf",
+        "number": 7,
+        "name": null,
+        "startsAt": "2026-10-26T07:00:00.000Z",
+        "endsAt": "2026-11-09T08:00:00.000Z",
+        "completedAt": null,
+        "progress": 0,
+        "issueCountHistory": [],
+        "completedIssueCountHistory": [],
+        "team": {
+          "name": "Fixture"
+        }
+      }
+    ],
+    "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+    }
+  }
+}

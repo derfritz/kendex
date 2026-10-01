@@ -60,7 +60,7 @@ single_issue() {
 # Args: identifier state_name state_type parent_identifier
 bundle_child() {
   local id="$1" sname="$2" stype="$3" parent="$4"
-  printf '{"id":"uuid-%s","identifier":"%s","title":"%s","description":null,"state":{"name":"%s","type":"%s"},"assignee":null,"labels":{"nodes":[]},"priority":3,"estimate":null,"parent":{"identifier":"%s"},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]},"children":{"nodes":[]}}' \
+  printf '{"id":"uuid-%s","identifier":"%s","title":"%s","description":null,"state":{"name":"%s","type":"%s"},"assignee":null,"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"parent":{"identifier":"%s"},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"children":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}' \
     "$id" "$id" "$id" "$sname" "$stype" "$parent"
 }
 
@@ -74,11 +74,11 @@ bundle_parent() {
 }
 
 comments_with_summary() {
-  emit '{"data":{"issue":{"comments":{"nodes":[{"id":"c1","body":"## Completion Summary\n\nShipped.","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","user":{"name":"Test"}}]}}}}'
+  emit '{"data":{"issue":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"c1","body":"## Completion Summary\n\nShipped.","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","user":{"name":"Test"}}]}}}}'
 }
 
 comments_empty() {
-  emit '{"data":{"issue":{"comments":{"nodes":[]}}}}'
+  emit '{"data":{"issue":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}'
 }
 
 if [[ "$query" == *"GetIssueWithBundle"* ]]; then

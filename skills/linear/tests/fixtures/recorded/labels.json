@@ -1,0 +1,22 @@
+{
+  "issueLabels": {
+    "nodes": [
+      {
+        "id": "9c5a4dce-c8e5-4aee-ab4d-3d0a23812f96",
+        "name": "Fixture",
+        "color": "#9C27B0",
+        "description": "Fixture",
+        "isGroup": false,
+        "team": null,
+        "parent": {
+          "name": "Fixture"
+        },
+        "createdAt": "2026-10-01T15:28:44.299Z"
+      }
+    ],
+    "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+    }
+  }
+}

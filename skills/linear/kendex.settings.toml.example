@@ -30,8 +30,7 @@ LINEAR_REQUIRE_REACH = ""
 # they lack; other commands print safe in its place and report nothing.
 LINEAR_FORMAT = "safe"
 
-# Seconds to wait before retrying a Linear call that was rate limited or
-# failed. The wait doubles on each further attempt. Whole seconds; 0 retries
+# Seconds to wait before retrying a failed Linear call. The wait doubles on each further attempt. Whole seconds; 0 retries
 # with no wait at all.
 LINEAR_RETRY_BASE_DELAY = "1"
 
@@ -45,7 +44,7 @@ LINEAR_APP_TOKEN = ""
 
 # OAuth application credentials. Set both in the private env file, never here.
 # Together they win over the personal key when LINEAR_APP_TOKEN is unset.
-# Both mint paths use fixed scope read,write. Only the pair's API path caches.
+# Both mint paths use fixed scope read,write. Neither mint path stores tokens.
 LINEAR_CLIENT_ID = ""
 
 # The OAuth application secret paired with LINEAR_CLIENT_ID. Set it only

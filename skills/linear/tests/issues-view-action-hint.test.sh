@@ -25,7 +25,6 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 
 # This root's own cache is the subject, so it replaces the assert lib's default
 # sandbox — still scratch, so the exit verdict's containment check holds.
-export LINEAR_CACHE_ROOT="$TMP_ROOT"
 LINEAR_SH="$TMP_ROOT/.agents/skills/linear/scripts/linear.sh"
 
 # The dispatcher must reject unsupported actions before any API call.
@@ -35,10 +34,6 @@ echo "curl must not be called by dispatcher-hint tests" >&2
 exit 1
 SH
 chmod +x "$TMP_ROOT/bin/curl"
-
-# Minimal cache so cache-query.sh reaches its action dispatch.
-mkdir -p "$TMP_ROOT/.cache/linear"
-printf '{"synced_at": "2026-01-01T00:00:00Z"}\n' >"$TMP_ROOT/.cache/linear/meta.json"
 
 ERR_FILE="$TMP_ROOT/stderr"
 
@@ -59,7 +54,7 @@ assert_eq "issues view exits nonzero" "$rc" "1"
 assert_eq "issues view emits no stdout result" "$out" ""
 assert_contains "issues view names the unknown action" "$err" "Unknown action 'view'"
 assert_contains "issues view hint names bulk-get" "$err" "linear.sh issues bulk-get"
-assert_contains "issues view hint names the cache lookup" "$err" "linear.sh cache issues get"
+assert_contains "issues view hint names the cache lookup" "$err" "linear.sh issues get"
 ARGS=(issues show PROJ-42)
 run_linear
 assert_eq "issues show near-miss exits nonzero" "$rc" "1"
@@ -76,23 +71,8 @@ assert_eq "unknown action exits nonzero" "$rc" "1"
 assert_contains "unknown action reports generic error" "$err" "Unknown action 'frobnicate'"
 assert_contains "unknown action points at usage" "$err" "Run 'issues.sh --help' for usage."
 assert_not_contains "unknown action gets no view hint" "$err" "bulk-get"
-# --- Cache issues namespace gets the same targeted hint -----------------------
-ARGS=(cache issues view PROJ-42)
-run_linear
-assert_eq "cache issues view exits nonzero" "$rc" "1"
-assert_contains "cache issues view names the unknown action" "$err" "Unknown issues action: view"
-assert_contains "cache issues view hint names the cache lookup" "$err" "cache issues get"
-ARGS=(cache issues frobnicate PROJ-42)
-run_linear
-assert_eq "unknown cache action exits nonzero" "$rc" "1"
-assert_contains "unknown cache action reports generic error" "$err" "Unknown issues action: frobnicate"
-assert_not_contains "unknown cache action gets no view hint" "$err" "bulk-get"
 # --- Real commands still route ------------------------------------------------
 ARGS=(issues bulk-get --help)
 run_linear
 assert_eq "issues bulk-get --help routes and exits 0" "$rc" "0"
 assert_contains "issues bulk-get --help prints issues usage" "$out" "Issue Operations"
-ARGS=(cache issues get --help)
-run_linear
-assert_eq "cache issues get --help routes and exits 0" "$rc" "0"
-echo

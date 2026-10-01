@@ -47,7 +47,6 @@ EOF
 case "${1:-help}" in help|--help|-h) show_help; exit 0 ;; esac
 
 source "$SCRIPT_DIR/../lib/common.sh"
-source "$SCRIPT_DIR/../lib/cache.sh"
 source "$SCRIPT_DIR/../lib/attachments.sh"
 
 read_body_file() {
@@ -82,9 +81,11 @@ list_comments() {
     fi
 
     local query='
-    query ListComments($issueId: String!) {
+    query ListComments($issueId: String!, $after: String) {
         issue(id: $issueId) {
-            comments {
+            id
+            comments(after: $after) {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     body
@@ -98,22 +99,43 @@ list_comments() {
 
     local variables="{\"issueId\": \"$issue_id\"}"
     local result
-    result=$(graphql_query "$query" "$variables")
-
-    # Cache-aside: store raw comment nodes for future reads
-    local raw_nodes
-    raw_nodes=$(echo "$result" | jq '.issue.comments.nodes // []')
-    cache_store_comments "$issue_id" "$raw_nodes" 2>/dev/null || true
+    result=$(graphql_pages "$query" "$variables" "issue.comments")
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_comments_list "$result"
             ;;
     esac
+}
+
+# Return one keyed comment array per requested issue, with no partial batch.
+bulk_list_comments() {
+    local ids=() from_stdin=false format="$DEFAULT_FORMAT" id raw comments result='{}'
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        --stdin) from_stdin=true; shift ;;
+        --format) linear_require_option_value "$@" || return 1; format="$2"; shift 2 ;;
+        --format=*) format="${1#*=}"; shift ;;
+        --*) printf 'linear-comments: unknown-option=%s\n' "$1" >&2; return 1 ;;
+        *) ids+=("$1"); shift ;;
+        esac
+    done
+    if [[ "$from_stdin" == true ]]; then
+        while IFS= read -r id || [[ -n "$id" ]]; do [[ -z "$id" ]] || ids+=("$id"); done
+    fi
+    [[ ${#ids[@]} -gt 0 ]] || { echo 'linear-comments: missing=issue-identifiers' >&2; return 1; }
+    linear_require_format "$format" safe raw || return 1
+    for id in "${ids[@]}"; do
+        raw=$(list_comments "$id" --format=raw) || return 1
+        if [[ "$format" == raw ]]; then comments=$(jq -ce '.issue.comments.nodes | arrays' <<<"$raw") || return 1
+        else comments=$(format_comments_list "$raw") || return 1; fi
+        result=$(jq -c --arg id "$id" --argjson comments "$comments" '. + {($id): $comments}' <<<"$result") || return 1
+    done
+    printf '%s\n' "$result"
 }
 
 create_comment() {
@@ -211,23 +233,6 @@ create_comment() {
 
     local result
     result=$(graphql_query "$mutation" "{\"input\": $input_json}")
-    # Write-through: append comment to cache, touch issue updatedAt
-    local created_comment
-    created_comment=$(echo "$result" | jq '.commentCreate.comment // empty')
-    if [[ -n "$created_comment" && "$created_comment" != "null" ]]; then
-        local cache_comment
-        cache_comment=$(echo "$created_comment" | jq 'del(.issue)')
-        cache_append_comment "$issue_id" "$cache_comment" || true
-        local _issue_ts
-        _issue_ts=$(echo "$created_comment" | jq -r '.issue.updatedAt // empty')
-        [[ -n "$_issue_ts" ]] && cache_touch_issue "$issue_id" "$_issue_ts" 2>/dev/null || true
-    fi
-# Download attachments in the submitted comment
-    if [[ -n "$created_comment" && "$created_comment" != "null" ]]; then
-        local _body
-        _body=$(echo "$created_comment" | jq -r '.body // empty')
-        attach_download_from_text "$_body" "$issue_id" "comment" &
-    fi
     normalize_mutation_response "$result" "commentCreate" "comment"
 }
 
@@ -281,22 +286,6 @@ update_comment() {
 
     local result
     result=$(graphql_query "$mutation" "{\"id\": \"$comment_id\", \"input\": {\"body\": $escaped_body}}")
-    # Write-through: update comment in cache
-    local updated_comment issue_id
-    updated_comment=$(echo "$result" | jq '.commentUpdate.comment // empty')
-    issue_id=$(echo "$updated_comment" | jq -r '.issue.identifier // empty' 2>/dev/null)
-    if [[ -n "$issue_id" && -n "$updated_comment" && "$updated_comment" != "null" ]]; then
-        local cache_comment
-        cache_comment=$(echo "$updated_comment" | jq 'del(.issue)')
-        cache_update_comment "$issue_id" "$cache_comment" || true
-        local _issue_ts
-        _issue_ts=$(echo "$updated_comment" | jq -r '.issue.updatedAt // empty')
-        [[ -n "$_issue_ts" ]] && cache_touch_issue "$issue_id" "$_issue_ts" 2>/dev/null || true
-        # Download any attachments in the updated comment
-        local _body
-        _body=$(echo "$updated_comment" | jq -r '.body // empty')
-        attach_download_from_text "$_body" "$issue_id" "comment" &
-    fi
     normalize_mutation_response "$result" "commentUpdate" "comment"
 }
 
@@ -312,10 +301,6 @@ delete_comment() {
 
     local result
     result=$(graphql_query "$mutation" "{\"id\": \"$comment_id\"}")
-    # Write-through: remove comment from cache
-    local success
-    success=$(echo "$result" | jq -r '.commentDelete.success // "false"')
-    [[ "$success" == "true" ]] && cache_delete_comment "$comment_id" || true
     normalize_mutation_response "$result" "commentDelete" "comment"
 }
 
@@ -327,6 +312,7 @@ shift || true
 linear_guard_write_action "$action" "create update delete" "$@" || exit 1
 
 case "$action" in
+    bulk-list) bulk_list_comments "$@" ;;
     list)
         if [ -z "${1:-}" ]; then
             echo '{"error": "Usage: comments.sh list <issue-id>"}' >&2

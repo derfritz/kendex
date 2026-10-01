@@ -28,14 +28,14 @@ printf '%s\n' "$payload" >>"${CURL_LOG:?}"
 query="$(jq -r '.query' <<<"$payload")"
 case "$query" in
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid","name":"TestTeam"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","name":"TestTeam"}]}}}___HTTP_CODE___200'
   ;;
 *"issueLabels(filter:"*)
   name="$(jq -r '.variables.name // empty' <<<"$payload")"
   if [ "$name" = "ghost-label" ]; then
-    printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   else
-    printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"lbl-1","name":"real-label"}]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"lbl-1","name":"real-label"}]}}}___HTTP_CODE___200'
   fi
   ;;
 *"issue(id:"*|*"issues(filter:"*)

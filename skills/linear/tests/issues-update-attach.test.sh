@@ -24,7 +24,7 @@ LINEAR="$PROJECT/.agents/skills/linear/scripts/linear.sh"
 CURL_LOG="$TMP_ROOT/curl-payloads.jsonl"
 ERR_FILE="$TMP_ROOT/stderr.txt"
 
-ISSUE_JSON='{"id":"issue-uuid-9","identifier":"TEAM-9","title":"t","description":"Existing text.","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Configured"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-9","createdAt":"2026-08-08T00:00:00Z","updatedAt":"2026-08-08T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}'
+ISSUE_JSON='{"id":"issue-uuid-9","identifier":"TEAM-9","title":"t","description":"Existing text.","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Configured"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/x/issue/TEAM-9","createdAt":"2026-08-08T00:00:00Z","updatedAt":"2026-08-08T00:00:00Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
 
 cat >"$PROJECT/bin/curl" <<SH
 #!/usr/bin/env bash
@@ -78,7 +78,7 @@ case "$query" in
   printf '%s' "{\"data\":{\"issue\":$ISSUE_JSON}}___HTTP_CODE___200"
   ;;
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *)
   printf '%s' '{"data":{}}___HTTP_CODE___200'

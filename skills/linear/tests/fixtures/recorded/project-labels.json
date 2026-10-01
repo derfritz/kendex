@@ -1,0 +1,112 @@
+{
+  "projectLabels": {
+    "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": "66bedacd-1dca-4920-a619-945f1bae2722"
+    },
+    "nodes": [
+      {
+        "id": "a687f7f6-e755-4ebc-8ddb-75e2b918d480",
+        "name": "Fixture",
+        "color": "#5e6ad2",
+        "description": null,
+        "isGroup": false,
+        "parent": null,
+        "createdAt": "2026-08-02T18:37:37.265Z"
+      },
+      {
+        "id": "81eebc89-25f2-4e82-84ea-fe117e34cd86",
+        "name": "Fixture",
+        "color": "#5e6ad2",
+        "description": null,
+        "isGroup": false,
+        "parent": null,
+        "createdAt": "2026-08-02T18:37:12.805Z"
+      },
+      {
+        "id": "fa9df9d3-4678-4106-9416-ff192d761e64",
+        "name": "Fixture",
+        "color": "#607D8B",
+        "description": null,
+        "isGroup": false,
+        "parent": {
+          "name": "Fixture"
+        },
+        "createdAt": "2026-03-12T03:03:53.360Z"
+      },
+      {
+        "id": "856a3857-9f36-431a-9399-53994974c28b",
+        "name": "Fixture",
+        "color": "#9B59B6",
+        "description": null,
+        "isGroup": false,
+        "parent": {
+          "name": "Fixture"
+        },
+        "createdAt": "2026-03-12T03:03:52.663Z"
+      },
+      {
+        "id": "7fbc58cf-933d-4838-8a2f-6f12fae3c112",
+        "name": "Fixture",
+        "color": "#FF6B35",
+        "description": null,
+        "isGroup": false,
+        "parent": {
+          "name": "Fixture"
+        },
+        "createdAt": "2026-03-12T03:03:52.005Z"
+      },
+      {
+        "id": "e3cfa754-5837-424a-acc5-7f392f90f982",
+        "name": "Fixture",
+        "color": "#9C27B0",
+        "description": null,
+        "isGroup": false,
+        "parent": {
+          "name": "Fixture"
+        },
+        "createdAt": "2026-03-12T03:03:51.299Z"
+      },
+      {
+        "id": "05f13ccb-ec51-4521-84a0-748425a8a8fc",
+        "name": "Fixture",
+        "color": "#FF9800",
+        "description": null,
+        "isGroup": false,
+        "parent": {
+          "name": "Fixture"
+        },
+        "createdAt": "2026-03-12T03:03:50.567Z"
+      },
+      {
+        "id": "ef14f77a-1ca9-426f-a9e7-d1247b52eca0",
+        "name": "Fixture",
+        "color": "#4CAF50",
+        "description": null,
+        "isGroup": false,
+        "parent": {
+          "name": "Fixture"
+        },
+        "createdAt": "2026-03-12T03:03:49.787Z"
+      },
+      {
+        "id": "e97ba72c-01a2-4e2e-89a4-46aa5920c145",
+        "name": "Fixture",
+        "color": "#009688",
+        "description": null,
+        "isGroup": true,
+        "parent": null,
+        "createdAt": "2026-03-12T03:03:48.964Z"
+      },
+      {
+        "id": "66bedacd-1dca-4920-a619-945f1bae2722",
+        "name": "Fixture",
+        "color": "#3F51B5",
+        "description": null,
+        "isGroup": true,
+        "parent": null,
+        "createdAt": "2026-03-12T03:03:48.660Z"
+      }
+    ]
+  }
+}

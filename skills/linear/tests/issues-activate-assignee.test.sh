@@ -55,23 +55,23 @@ case "$query" in
     stored="$(tr '[:upper:]' '[:lower:]' <<<"$stored")"
   fi
   if [[ "$asked" == "$stored" ]]; then
-    printf '{"data":{"users":{"nodes":[%s]}}}___HTTP_CODE___200' "$dana"
+    printf '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[%s]}}}___HTTP_CODE___200' "$dana"
   else
-    printf '%s' '{"data":{"users":{"nodes":[]}}}___HTTP_CODE___200'
+    printf '%s' '{"data":{"users":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200'
   fi
   ;;
 *"issueLabels(filter:"*)
   case "$(jq -r '.name' <<<"$variables")" in
-  "agent:rust") printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-agent-rust"}]}}}___HTTP_CODE___200' ;;
-  "backend") printf '%s' '{"data":{"issueLabels":{"nodes":[{"id":"label-backend"}]}}}___HTTP_CODE___200' ;;
-  *) printf '%s' '{"data":{"issueLabels":{"nodes":[]}}}___HTTP_CODE___200' ;;
+  "agent:rust") printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-agent-rust"}]}}}___HTTP_CODE___200' ;;
+  "backend") printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"label-backend"}]}}}___HTTP_CODE___200' ;;
+  *) printf '%s' '{"data":{"issueLabels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}___HTTP_CODE___200' ;;
   esac
   ;;
 *"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
   ;;
 *"workflowStates(filter:"*)
-  printf '%s' '{"data":{"workflowStates":{"nodes":[{"id":"state-in-progress"}]}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"workflowStates":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"state-in-progress"}]}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
   if [[ "${FAKE_FAIL:-}" == issue ]]; then
@@ -79,7 +79,7 @@ case "$query" in
     exit 0
   fi
   jq -cj --argjson assignee "${FAKE_ASSIGNEE:-null}" '.data.issue.assignee = $assignee' <<'JSON'
-{"data":{"issue":{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"team":{"name":"Claude"},"labels":{"nodes":[{"name":"agent:old"},{"name":"backend"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","branchName":"cc-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"parent":null,"children":{"nodes":[]},"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}
+{"data":{"issue":{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"name":"agent:old"},{"name":"backend"}]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","branchName":"cc-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","archivedAt":null,"trashed":null,"parent":null,"children":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}
 JSON
   printf '%s' '___HTTP_CODE___200'
   ;;
@@ -88,7 +88,7 @@ JSON
     printf '%s' '{"data":{"issueUpdate":{"success":false,"issue":null}}}___HTTP_CODE___200'
     exit 0
   fi
-  printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"In Progress","type":"started"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:01Z","archivedAt":null,"trashed":null,"relations":{"nodes":[]},"inverseRelations":{"nodes":[]}}}}}___HTTP_CODE___200'
+  printf '%s' '{"data":{"issueUpdate":{"success":true,"issue":{"id":"issue-uuid","identifier":"CC-760","title":"t","description":null,"state":{"name":"In Progress","type":"started"},"assignee":null,"project":null,"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Claude"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":3,"estimate":null,"sortOrder":1.0,"url":"https://linear.app/test/issue/CC-760","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:01Z","archivedAt":null,"trashed":null,"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}___HTTP_CODE___200'
   ;;
 *)
   printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200'

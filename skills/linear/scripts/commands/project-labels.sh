@@ -52,14 +52,16 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 list_project_labels() {
     local first=75
+    local total_limit=75
     local format="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --max) total_limit=0; shift ;;
             --format=*) format="${1#--format=}"; shift ;;
             --format) format="$2"; shift 2 ;;
             --limit)
-                first="$2"
+                first="$2"; total_limit="$2"
                 shift 2
                 ;;
             --) shift; break ;;
@@ -69,8 +71,9 @@ list_project_labels() {
     done
 
     local query='
-    query ListProjectLabels($first: Int) {
-        projectLabels(first: $first) {
+    query ListProjectLabels($first: Int, $after: String) {
+        projectLabels(first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -83,9 +86,11 @@ list_project_labels() {
         }
     }'
 
+    linear_require_pattern --limit "$first" '^[0-9]+$' 'a non-negative integer' || return 1
+    if (( first > 50 )); then first=50; fi
     local variables="{\"first\": $first}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" "projectLabels" "$total_limit")
 
     case "$format" in
         raw) echo "$result" ;;
@@ -133,9 +138,9 @@ create_project_label() {
 
     # Get parent label group ID if specified
     if [ -n "$parent" ]; then
-        local parent_query='query GetParentProjectLabel($name: String!) { projectLabels(filter: {name: {eq: $name}}) { nodes { id isGroup } } }'
+        local parent_query='query GetParentProjectLabel($name: String!, $after: String) { projectLabels(filter: {name: {eq: $name}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id isGroup } } }'
         local parent_result
-        parent_result=$(graphql_query "$parent_query" "{\"name\": \"$parent\"}")
+        parent_result=$(graphql_pages "$parent_query" "{\"name\": \"$parent\"}" projectLabels)
         local parent_id
         parent_id=$(echo "$parent_result" | jq -r '.projectLabels.nodes[0].id // empty')
         if [ -z "$parent_id" ]; then

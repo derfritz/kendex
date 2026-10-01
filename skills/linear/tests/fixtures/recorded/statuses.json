@@ -1,0 +1,90 @@
+{
+  "workflowStates": {
+    "nodes": [
+      {
+        "id": "70a85718-743c-4876-aef8-a6b74b88e4be",
+        "name": "Fixture",
+        "type": "triage",
+        "color": "#FC7840",
+        "position": 0,
+        "team": {
+          "name": "Fixture"
+        }
+      },
+      {
+        "id": "efacd3b5-6abd-4069-9604-8b2c8354ebd2",
+        "name": "Fixture",
+        "type": "unstarted",
+        "color": "#e2e2e2",
+        "position": 1,
+        "team": {
+          "name": "Fixture"
+        }
+      },
+      {
+        "id": "c4c7079d-e938-471e-9b46-fb1270ee663f",
+        "name": "Fixture",
+        "type": "duplicate",
+        "color": "#95a2b3",
+        "position": 5,
+        "team": {
+          "name": "Fixture"
+        }
+      },
+      {
+        "id": "9dc8fc58-8ea8-4b3e-9545-d56714e81869",
+        "name": "Fixture",
+        "type": "completed",
+        "color": "#5e6ad2",
+        "position": 3,
+        "team": {
+          "name": "Fixture"
+        }
+      },
+      {
+        "id": "8116df2f-9b8b-45dc-9243-dda89ffa0ec8",
+        "name": "Fixture",
+        "type": "started",
+        "color": "#0f783c",
+        "position": 1002,
+        "team": {
+          "name": "Fixture"
+        }
+      },
+      {
+        "id": "537a296d-d8aa-41e7-9554-d79bc34da78f",
+        "name": "Fixture",
+        "type": "backlog",
+        "color": "#bec2c8",
+        "position": 0,
+        "team": {
+          "name": "Fixture"
+        }
+      },
+      {
+        "id": "4c36f183-c48a-44cf-9b49-93b5a2bb43f1",
+        "name": "Fixture",
+        "type": "started",
+        "color": "#f2c94c",
+        "position": 2,
+        "team": {
+          "name": "Fixture"
+        }
+      },
+      {
+        "id": "028eb8a1-c2fe-4a92-9e6b-4102c5f02b32",
+        "name": "Fixture",
+        "type": "canceled",
+        "color": "#95a2b3",
+        "position": 4,
+        "team": {
+          "name": "Fixture"
+        }
+      }
+    ],
+    "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+    }
+  }
+}

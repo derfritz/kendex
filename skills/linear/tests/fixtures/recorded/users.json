@@ -1,0 +1,19 @@
+{
+  "users": {
+    "nodes": [
+      {
+        "id": "f9755405-2f06-46a6-b706-1f552ff74bef",
+        "name": "Fixture",
+        "email": "fixture@example.invalid",
+        "displayName": "Fixture",
+        "active": true,
+        "admin": false,
+        "createdAt": "2026-09-30T09:59:56.600Z"
+      }
+    ],
+    "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+    }
+  }
+}

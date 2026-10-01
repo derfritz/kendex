@@ -60,12 +60,14 @@ source "$SCRIPT_DIR/../lib/common.sh"
 list_initiatives() {
     local status=""
     local first=75
+    local total_limit=75
     FORMAT="${DEFAULT_FORMAT}"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --max) total_limit=0; shift ;;
             --status) status="$2"; shift 2 ;;
-            --limit) first="$2"; shift 2 ;;
+            --limit) first="$2"; total_limit="$2"; shift 2 ;;
             --format) FORMAT="$2"; shift 2 ;;
             --format=*) FORMAT="${1#--format=}"; shift ;;
             --) shift; break ;;
@@ -80,8 +82,9 @@ list_initiatives() {
     fi
 
     local query='
-    query ListInitiatives($filter: InitiativeFilter, $first: Int) {
-        initiatives(filter: $filter, first: $first) {
+    query ListInitiatives($filter: InitiativeFilter, $first: Int, $after: String) {
+        initiatives(filter: $filter, first: $first, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes {
                 id
                 name
@@ -90,21 +93,23 @@ list_initiatives() {
                 status
                 health
                 targetDate
-                projects { nodes { id name state } }
+                projects(first: 10) { pageInfo { hasNextPage endCursor } nodes { id name state } }
                 createdAt
                 updatedAt
             }
         }
     }'
 
+    linear_require_pattern --limit "$first" '^[0-9]+$' 'a non-negative integer' || return 1
+    if (( first > 50 )); then first=50; fi
     local variables="{\"filter\": $filter_json, \"first\": $first}"
     local result
-    result=$(graphql_query "$query" "$variables")
+    result=$(graphql_pages "$query" "$variables" "initiatives" "$total_limit")
 
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_initiatives_list "$result"
@@ -113,6 +118,7 @@ list_initiatives() {
 }
 
 get_initiative() {
+    local LINEAR_INITIATIVE_PROJECT_MODE=get
     local initiative_id=""
     FORMAT="${DEFAULT_FORMAT}"
 
@@ -149,7 +155,8 @@ get_initiative() {
                 health
                 createdAt
             }
-            projects {
+            projects(first: 10) {
+                pageInfo { hasNextPage endCursor }
                 nodes {
                     id
                     name
@@ -170,7 +177,7 @@ get_initiative() {
     # Apply output format
     case "$FORMAT" in
         raw)
-            echo "$result"
+            linear_public_result "$result"
             ;;
         safe|*)
             format_initiative_single "$result"
@@ -381,14 +388,15 @@ remove_project() {
 
     # Find the InitiativeToProject link ID via top-level query
     local link_query='
-    query GetInitiativeLinks {
-        initiativeToProjects(first: 250) {
+    query GetInitiativeLinks($after: String) {
+        initiativeToProjects(first: 250, after: $after) {
+            pageInfo { hasNextPage endCursor }
             nodes { id initiative { id } project { id } }
         }
     }'
 
     local link_result
-    link_result=$(graphql_query "$link_query" "{}")
+    link_result=$(graphql_pages "$link_query" "{}" initiativeToProjects)
     local link_id
     link_id=$(echo "$link_result" | jq -r --arg iid "$initiative_id" --arg pid "$project_id" '.initiativeToProjects.nodes[] | select(.initiative.id == $iid and .project.id == $pid) | .id')
 

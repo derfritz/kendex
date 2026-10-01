@@ -32,7 +32,6 @@ git -C "$TMP_ROOT" init -q
 
 # This root's own cache is the subject, so it replaces the assert lib's default
 # sandbox — still scratch, so the exit verdict's containment check holds.
-export LINEAR_CACHE_ROOT="$TMP_ROOT"
 
 # Writes require a configured Linear team, as in any real project
 printf '[env]\nLINEAR_TEAM = "Fixture"\n' >"$TMP_ROOT/kendex.settings.toml"
@@ -40,14 +39,7 @@ printf '[env]\nLINEAR_TEAM = "Fixture"\n' >"$TMP_ROOT/kendex.settings.toml"
 UUID="aaaaaaaa-bbbb-cccc-dddd-000000000042"
 URL="https://linear.app/test/issue/PROJ-42"
 
-seed_cache() {
-  mkdir -p "$TMP_ROOT/.cache/linear/comments"
-  cat > "$TMP_ROOT/.cache/linear/issues.json" <<JSON
-[{"id":"$UUID","identifier":"PROJ-42","title":"t","state":{"name":"Backlog","type":"backlog"}},
- {"id":"aaaaaaaa-bbbb-cccc-dddd-000000000043","identifier":"PROJ-43","title":"other","state":{"name":"Backlog","type":"backlog"}}]
-JSON
-  echo '[{"id":"c1","body":"hi"}]' > "$TMP_ROOT/.cache/linear/comments/PROJ-42.json"
-}
+
 
 # Mocked curl: logs every payload, and serves the archive/delete mutation
 # response shape selected via the mode file. "no_entity" returns success
@@ -93,7 +85,6 @@ run_linear() {
 }
 
 # --- archive happy path: entity confirms, envelope populated, cache updated ------
-seed_cache
 : > "$TMP_ROOT/posted.log"
 echo "entity_ok" > "$TMP_ROOT/mode"
 archive_rc=0
@@ -106,15 +97,8 @@ assert "the archive envelope carries identifier, url and the confirming entity" 
 assert_file_contains "the issueArchive mutation was posted" "$TMP_ROOT/posted.log" "issueArchive"
 assert_eq "the archive mutation posts the resolved UUID" \
   "$(grep issueArchive "$TMP_ROOT/posted.log" | jq -r '.variables.id')" "$UUID"
-assert_not "a confirmed archive removes PROJ-42 from the cache" \
-  jq -e '.[] | select(.identifier == "PROJ-42")' "$TMP_ROOT/.cache/linear/issues.json"
-assert "a confirmed archive leaves unrelated issues in the cache" \
-  jq -e '.[] | select(.identifier == "PROJ-43")' "$TMP_ROOT/.cache/linear/issues.json"
-assert_not "a confirmed archive drops the comment cache too" \
-  test -f "$TMP_ROOT/.cache/linear/comments/PROJ-42.json"
 
 # --- trash happy path: entity trashed=true confirms ------------------------------
-seed_cache
 : > "$TMP_ROOT/posted.log"
 echo "entity_trashed" > "$TMP_ROOT/mode"
 trash_rc=0
@@ -125,11 +109,8 @@ assert_jq "the trash envelope carries the confirming entity" \
   "$out" '.success == true and .identifier == "PROJ-42" and .data.entity.trashed == true'
 assert_eq "the trash mutation posts the resolved UUID" \
   "$(grep issueDelete "$TMP_ROOT/posted.log" | jq -r '.variables.id')" "$UUID"
-assert_not "a confirmed trash removes PROJ-42 from the cache" \
-  jq -e '.[] | select(.identifier == "PROJ-42")' "$TMP_ROOT/.cache/linear/issues.json"
 
 # --- success=true, no entity: hard failure, cache untouched ------------------
-seed_cache
 echo "no_entity" > "$TMP_ROOT/mode"
 rc=0
 out="$(run_linear issues archive PROJ-42 2>"$TMP_ROOT/err")" || rc=$?
@@ -139,8 +120,6 @@ assert_ne "an archive reporting success with no entity fails" "$rc" 0
 assert_not "an unconfirmed archive prints no success envelope" jq -e '.success == true' <<<"$out"
 assert_contains "the unconfirmed-archive error names the reference" "$err" "archive not confirmed for PROJ-42"
 assert_contains "the unconfirmed-archive error names the resolved id" "$err" "$UUID"
-assert "an unconfirmed archive leaves PROJ-42 in the cache" \
-  jq -e '.[] | select(.identifier == "PROJ-42")' "$TMP_ROOT/.cache/linear/issues.json"
 
 # --- same shape on trash ----------------------------------------------------------
 echo "no_entity" > "$TMP_ROOT/mode"

@@ -9,7 +9,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the agent command refer
 3. Register its write actions with `linear_guard_write_action` (below).
 4. Update the Commands table in `SKILL.md`.
 
-Cache reads, merges and write-through are `scripts/lib/cache.sh`; output formats are `scripts/lib/formatters.sh`, which also holds the jq definitions those filters prepend (`ISSUE_RELATION_JQ` for issue relations, `PROJECT_PICK_JQ` for the rule deciding which project a name means); issue rules at create and transition time are `scripts/lib/issue-validation.sh`; the Bash 4 runtime preflight is `scripts/lib/bash-version.sh`.
+Connection traversal is `scripts/lib/pages.sh`; output formats are `scripts/lib/formatters.sh`, which also holds the jq definitions those filters prepend (`ISSUE_RELATION_JQ` for issue relations, `PROJECT_PICK_JQ` for the rule deciding which project a name means); issue rules at create and transition time are `scripts/lib/issue-validation.sh`; the Bash 4 runtime preflight is `scripts/lib/bash-version.sh`.
 
 ## Team targeting
 
@@ -38,11 +38,9 @@ The guard proves a team is configured, not that a write lands in it. A mutation 
 - Resource help and a default-help command's bare form return before `common.sh` loads project configuration. Nested help stays with the command parser that owns its option arity.
 - Build every GraphQL variables payload with `jq --arg` / `--argjson`. A name holding a quote must not be able to reshape the request, and a hand-built payload fails as "Invalid GraphQL variables JSON", which names neither the flag nor the value.
 - Validate any value spliced unquoted into JSON, a jq program, or shell arithmetic with `linear_require_pattern` before it gets there.
-- Read cache files through `cache_jq_file`. An absent file is a cold cache and returns the caller's default; a file that exists but does not parse must fail loudly, because the same empty default would report a corrupt cache as "no results".
-- Rewrite `issues.json` or `projects.json` only through `cache_write` or `cache_merge`. Each takes the file's own lock, `<file>.lock`, writes a unique temp file beside the target and renames it into place. The sync lock holds syncs apart from each other and nothing else: a write-through from another session runs during a sync, and a shared `<file>.tmp` lets two writers interleave into a JSON array followed by the tail of a longer one. A merge over a cache that does not parse refuses with the read path's diagnostic, naming `sync --full`; it never installs the delta as the whole set. `tests/cache-write-serialized.test.sh` proves both.
 - Distinguish "the lookup failed" from "there is no such thing". `resolve_label_id` returns 2 for the former and 1 for the latter precisely because `--labels` replaces a label set, where the two outcomes differ by data loss.
-- Build any timestamp compared against a cached `startsAt` or `updatedAt` with `cache_now_utc` or `cache_utc_days_ago` from `scripts/lib/cache-dates.sh`, never `date -Iseconds`. The comparison is lexical against records sync stores in UTC, so a local-time value with an offset suffix only agrees on a UTC host. `date -Iseconds` is right for a timestamp this skill writes, such as `sync`'s `synced_at`.
-- Select a cycle by date, not by position in the sorted set. `cache_working_cycle`, `cache_cycles_before` and `cache_cycles_after` are the definitions, and every caller hands the working cycle over unguarded: with none running they cut at today. A caller that guards on `working == null` instead reintroduces one cache answering `--type past` with a cycle and `--cycle previous` with a refusal.
+- Build UTC comparison dates with `linear_now_utc` and `linear_utc_days_ago` from `scripts/lib/cycle-dates.sh`.
+- Select a cycle by date, not by position in the sorted set. `linear_working_cycle`, `linear_cycles_before` and `linear_cycles_after` are the definitions, and every caller hands the working cycle over unguarded: with none running they cut at today. A caller that guards on `working == null` instead reintroduces one read answering `--type past` with a cycle and `--cycle previous` with a refusal.
 
 ## Tests
 
@@ -55,7 +53,6 @@ Each test stands up its own fixture root and a `curl` shim on `PATH`, so none re
 
 `tests/oauth-auth.test.sh` distinguishes the selected credential from unused key provenance in credential reports. `tests/api-key-precedence.test.sh` and `tests/team-target-fail-closed.test.sh` cover personal-key and team warnings.
 
-The cache is isolated for you. Sourcing `tests/lib/assert.sh` exports `LINEAR_CACHE_ROOT` at a scratch root that goes with the suite's other scratch directories at exit, and the scripts check that variable before anything derived from where the process is standing, so a suite that asks for nothing writes nowhere near the real `.cache/linear`. A suite that stands up its own project root points `LINEAR_CACHE_ROOT` at that root instead; one whose subject is the root resolution runs its invocations under `env -u LINEAR_CACHE_ROOT`. The verdict refuses a suite that ends with the variable unset or aimed outside the scratch it registered. `PROJECT_ROOT` is not a redirect and cannot be made one: `common.sh` assigns it from `git rev-parse` on every source, so a value you export never survives to be read.
 
 ### Assertions
 
