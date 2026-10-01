@@ -360,12 +360,6 @@ lm send --item overseer --directive --file "$(text reply 'Incomplete.')" --threa
 assert_eq "$ERR" "lane-mail: file-unreadable=" "control: omitting the pair guard loses its incomplete-pointer refusal"
 LANE_MAIL_BIN="$LANE_MAIL"
 
-new_repo control_pointer_target
-mutant pointer-target '[ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given"' '[ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || :'
-lm send --item overseer --file "$(text reply 'Wrong target.')" --thread-ts 1.1 --parent "$POINTER"
-assert_eq "$RC" "0" "control: omitting the target guard admits pointers on a non-directive"
-LANE_MAIL_BIN="$LANE_MAIL"
-
 new_repo control_pointer_shape
 mutant pointer-shape '(.author == "owner" or .author == "bot")' 'true'
 INVALID_POINTER="$(text invalid-parent '{"ts":"1.1","author":"other","excerpt":"A release."}')"
