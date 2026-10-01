@@ -1,6 +1,6 @@
 # slack
 
-A relay between an overseer's mailbox and one private Slack channel. The owners of a kendex overseer session use it to steer that session from Slack and read its questions, rulings and reports there.
+A relay between an overseer's mailbox and one private Slack channel. Session owners steer the overseer from Slack and read its questions, rulings and reports.
 
 ## Install
 
@@ -17,13 +17,10 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - Deliver any other owner message to the overseer as a directive, including a live reply in any thread at any age, with small parent context.
 - Read a requested thread as plain text with `slack thread`, without loading channel history.
 - Send a text reply only to its thread with `slack post --thread TS`.
-- Save the files an owner sends under `tmp/slack/files/` and name each saved path in the directive.
-- Mark each directive's message with :eyes: once it reaches the overseer's mailbox, and :white_check_mark: once the overseer reads it.
 - Post the overseer's notices and rulings, and upload its progress reports with the notice as the comment.
 - Post an alert or a file to any channel from a script, with `--mention` for the owners.
 - Send text as standard Markdown and file comments as Slack's mrkdwn markup. [Message standard](SKILL.md#message-standard) defines the difference.
 - Refuse any text or file that matches the secret-value pattern.
-- Run as a systemd user unit and report its health in one line per checkout.
 
 ## How it works
 
@@ -104,8 +101,6 @@ The master's watch writes its read line count to `<root>/tmp/lane-mail/overseer/
 `lane-mail events`, not the envelope writer, supplies `line` (physical position) and `count` (complete line count). Filtered invalid JSON rows prevent the relay from computing either. The oldest supported producer is orch 3.0.0 with its [owner channel](https://github.com/vanillagreencom/kendex/commit/ac62981e). [Position metadata](https://github.com/vanillagreencom/kendex/commit/e9c9497e) enables master-read suppression. Missing or malformed positions still route without that suppression. Each bad field gets one `envelope-field` journal line with root and id. Other bad fields skip the envelope. A checkout poll failure names the root; other checkouts still run.
 
 ## Steering contract
-
-What an owner's message in the channel does:
 
 | Where you write | What happens |
 |-----------------|--------------|
