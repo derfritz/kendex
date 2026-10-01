@@ -3231,7 +3231,7 @@ validate_completion() {
 
         # Check for Completion Summary comment
         local comments
-        comments=$(json_or_default '[]' array "$SCRIPT_DIR/comments.sh" list "$issue_id")
+        comments=$("$SCRIPT_DIR/comments.sh" list "$issue_id" --format=safe) || return $?
         local has_summary
         has_summary=$(echo "$comments" | jq 'any(.[]; .body | (contains("Completion Summary") or contains("Bundle Complete")))')
 

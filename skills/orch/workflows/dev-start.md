@@ -175,8 +175,6 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 `HEAD` must differ from `pre_delegate_sha`, `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands explicit single-PR bundles and audit-created sub-issues worked in this session. `state_ok` expects bundle-expanded sub-issues `Done` and the session-root issue in a pre-merge state (`In Progress` or `In Review`) — never `Done` before merge. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
 
-A quota failure from `validate-completion` takes [Held tracker work](#held-tracker-work), then repeats that same live check. Do not replace it with a cache check or weaken its state and posted-summary requirements. An unposted summary without a pending command, a genuine missing summary, `.all_ok: false`, or a non-quota command failure still blocks acceptance.
-
 A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
 
 Before B or the check's `reason` routes the round, run [Store Validation Time](#store-validation-time) for every `reason` but `missing` and `invalid`: that artifact passed the schema gate, so its echoed `validate_time` is the round's own. A round the table then accepts, retries, replaces with a fresh round or escalates keeps its validation minutes, and no row below names the step again.

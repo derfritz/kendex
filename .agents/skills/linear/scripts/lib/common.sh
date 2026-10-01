@@ -177,23 +177,6 @@ check_api_key() {
     linear_check_credentials
 }
 
-json_or_default() {
-    local fallback="$1"
-    local expected_type="$2"
-    shift 2
-
-    local output=""
-    if ! output=$("$@" 2>/dev/null); then
-        :
-    fi
-
-    if ! jq -e --arg type "$expected_type" 'type == $type' >/dev/null 2>&1 <<<"$output"; then
-        output="$fallback"
-    fi
-
-    printf '%s' "$output"
-}
-
 curl_config_quote() {
     printf '%s' "$1" | jq -Rs .
 }

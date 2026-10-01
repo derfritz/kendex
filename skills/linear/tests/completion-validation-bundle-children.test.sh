@@ -1,27 +1,7 @@
 #!/usr/bin/env bash
-# Tests for completion validation of bundle children.
-#
-# validate_completion() must expand --include-children-of with the filter
-#   select(.state_type | IN("completed", "canceled") | not)
-# which DROPPED completed (and canceled) children and kept only pending ones.
-# Because bundle children are validated with the "bundle-child" role — which
-# expects state "Done" — the exact children that should pass (completed ones)
-# were silently omitted. A fully-Done bundle expanded to an EMPTY child list and
-# validate-completion returned only the session-root result.
-#
-# The fix expands every non-canceled child: completed children ARE included and
-# validate as Done/pass, still-pending children are included and fail, and
-# canceled children are excluded (abandoned work can never be "Done").
-#
-# This drives the real linear.sh end-to-end with curl mocked (offline). It
-# exercises three scenarios:
-#   A. All children completed  -> children present + passing, all_ok true.
-#   B. One child still pending -> child present + failing, all_ok false.
-#   C. A canceled child        -> excluded from the expansion entirely.
-#
-# unguarded, scenario A fails (children CC-901/CC-902 omitted), scenario B fails
-# (CC-912 omitted rather than reported failing), and scenario C's canceled child
-# was already excluded (unchanged).
+# Live completion validation includes non-canceled children and preserves
+# ListComments failures for session roots, bundle children and containers.
+# The real linear.sh runs offline against a curl fixture.
 
 set -euo pipefail
 
@@ -36,6 +16,7 @@ cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
+set -euo pipefail
 # Minimal Linear GraphQL mock. Dispatches on query kind + the issue identifier
 # carried in variables. Emits "<json>___HTTP_CODE___200" like the real API.
 config="$(cat)"
@@ -92,6 +73,23 @@ if [[ "$query" == *"GetIssueWithBundle"* ]]; then
   *) emit '{"errors":[{"message":"unknown bundle"}]}' ;;
   esac
 elif [[ "$query" == *"ListComments"* ]]; then
+  if [[ "$vid" == "${COMMENT_TARGET:-}" ]]; then
+    case "$COMMENT_REPLY" in
+    quota)
+      args=("$@")
+      for ((i=0; i<${#args[@]}; i++)); do
+        if [[ "${args[i]}" == "--dump-header" ]]; then
+          printf 'Requests-Reset: 1790749380000\r\n' >"${args[i+1]}"
+        fi
+      done
+      printf '%s___HTTP_CODE___400' '{"errors":[{"message":"Rate limit exceeded.","extensions":{"code":"RATELIMITED"}}]}'
+      exit 0 ;;
+    auth) printf '%s___HTTP_CODE___401' '{"errors":[{"message":"Unauthorized"}]}' ; exit 0 ;;
+    network) exit 7 ;;
+    empty) comments_empty ; exit 0 ;;
+    plain) emit '{"data":{"issue":{"comments":{"nodes":[{"id":"c2","body":"Work in progress","user":{"name":"Test"}}]}}}}' ; exit 0 ;;
+    esac
+  fi
   # Every issue except the canceled one carries a summary comment. Container
   # parents (CC-930/CC-940) have none: their summary is posted by `issues
   # complete` at completion time, after validation.
@@ -128,9 +126,12 @@ chmod +x "$TMP_ROOT/bin/curl"
 # invocation names the format it asserts on instead of inheriting the host
 # project's setting.
 run_validate() {
-  PATH="$TMP_ROOT/bin:$PATH" \
+  env -i HOME="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" \
+    LINEAR_CACHE_ROOT="$ASSERT_CACHE_ROOT" \
+    LINEAR_RETRY_BASE_DELAY=0 LINEAR_CLIENT_ID="" LINEAR_CLIENT_SECRET="" \
     LINEAR_API_KEY_OVERRIDE=test-token \
     LINEAR_FORMAT=safe \
+    COMMENT_TARGET="${comment_target:-}" COMMENT_REPLY="${comment_reply:-}" \
     bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" \
     issues validate-completion "$@"
 }
@@ -211,3 +212,36 @@ assert_ne "F: --container with mismatched --include-children-of exits nonzero" "
 outS="$(run_validate CC-901 2>/dev/null)"
 check "S: single-issue validate has exactly one result" "$outS" \
   '(.results | length) == 1 and .results[0].id == "CC-901"'
+
+# ListComments is a live dependency even for a container parent whose summary
+# is not required. Failure yields no validation result, not has_summary=false.
+for row in \
+  'single|CC-900|CC-900|single|quota|1|{"error":"Rate limited. Try again later.","Requests-Reset":"1790749380000"}' \
+  'bundle-root|CC-900|CC-900|bundle|quota|1|{"error":"Rate limited. Try again later.","Requests-Reset":"1790749380000"}' \
+  'bundle-child|CC-900|CC-901|bundle|quota|1|{"error":"Rate limited. Try again later.","Requests-Reset":"1790749380000"}' \
+  'container-parent|CC-930|CC-930|container|quota|1|{"error":"Rate limited. Try again later.","Requests-Reset":"1790749380000"}' \
+  'container-child|CC-930|CC-931|container|quota|1|{"error":"Rate limited. Try again later.","Requests-Reset":"1790749380000"}' \
+  'bundle-auth|CC-900|CC-901|bundle|auth|1|{"error":"linear-auth: http=401 credential=api-key"}' \
+  'container-network|CC-930|CC-930|container|network|1|{"error":"HTTP error: 000"}' \
+  'single-empty|CC-900|CC-900|single|empty|0|false' \
+  'single-plain|CC-900|CC-900|single|plain|0|false' \
+  'child-empty|CC-900|CC-901|bundle|empty|0|false' \
+  'child-plain|CC-900|CC-901|bundle|plain|0|false'; do
+  IFS='|' read -r name root comment_target mode comment_reply want_rc expected <<<"$row"
+  args=("$root")
+  [[ "$mode" == single ]] || args+=(--include-children-of "$root")
+  [[ "$mode" != container ]] || args+=(--container)
+  rc=0
+  out="$(run_validate "${args[@]}" 2>"$TMP_ROOT/comments-error")" || rc=$?
+  assert_eq "$name: comments outcome status" "$rc" "$want_rc"
+  if [[ "$want_rc" == 1 ]]; then
+    assert_eq "$name: no validation result on dependency failure" "$out" ""
+    diagnostic="$(jq -cS . <"$TMP_ROOT/comments-error")"
+    expected="$(jq -cS . <<<"$expected")"
+    assert_eq "$name: preserves comments diagnostic" "$diagnostic" "$expected"
+  else
+    check "$name: successful read without summary is a validation failure" "$out" \
+      '.all_ok == false and any(.results[]; .has_summary == false and .state_ok == true and .ok == false)'
+    assert_eq "$name: no dependency diagnostic" "$(<"$TMP_ROOT/comments-error")" ""
+  fi
+done
