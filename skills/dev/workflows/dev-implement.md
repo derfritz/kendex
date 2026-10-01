@@ -69,7 +69,7 @@ Linear only: activate the issue, or the parent alone if bundled (sub-issues acti
 .agents/skills/linear/scripts/linear.sh cache comments list [ISSUE_ID]
 ```
 
-**Held tracker writes.** For every Linear mutation in this workflow, a `Rate limited` answer holds the write, not the implementation. Keep the plain `linear.sh` command and its payload file under this worktree's `tmp/`. Retry it once after the reported `Requests-Reset` time through the orch job runner. If the reset is absent, wait 120 seconds through that runner before the retry. Record any still-owed writes and their file paths in the summary and return them to the lane. Other write failures stop the round. Never mark the root issue Done before merge.
+**Held tracker writes.** For every Linear mutation in this workflow, a `Rate limited` answer holds the write, not the implementation. Record it through [orch dev-start § Held tracker work](../../orch/workflows/dev-start.md#held-tracker-work). The lane owns the pending command, payload and retry; the dev agent records them and continues without retrying the mutation. Other write failures stop the round. Issue-state rules remain in § 10.
 
 GitHub only:
 
@@ -87,7 +87,7 @@ Read the issue description — `.description` from the cache read above, or `gh 
 
 Cited research, decision, and context files are mandatory reading; how the research applies is yours to decide. Evaluate it against existing patterns and architecture docs, updating those docs when it changes documented patterns, and add anything project-specific worth persisting to `kendex.toml`. Reference an already-recorded decision (`.agents/skills/decider/scripts/decisions search --issue [RESEARCH_ISSUE_ID]`) rather than duplicating it; record a new one only for a decision your evaluation newly reveals.
 
-For a missing planning or research path in a Linear brief, follow [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) before classifying the context as missing.
+For a missing planning or research path in a Linear brief, follow [linear SKILL.md § Resolve a cited artifact](../../linear/SKILL.md#resolve-a-cited-artifact) with § 2.1's sync policy and confirmed preflight-cache outcome. Required context that remains missing, ambiguous or unreadable stops the round.
 
 ### 2.3 Evaluate Feasibility
 
@@ -311,7 +311,7 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 
 One `--qa-label` per § 8 signal, none if nothing triggered.
 
-Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. A Linear summary still held under quota also takes `--no-summary`; the artifact retains its content without claiming it was posted. The summary records the skipped sync, its diagnostic, the round-end retry or explicit no-retry, and any still-owed tracker writes. Bundled rounds add `--bundled` and one `--item` per sub-issue. See § 11.
+Every single round appends `--summary-file tmp/completion-summary-[ISSUE_ID].md`; GitHub and ad-hoc rounds also append `--no-summary`. A Linear summary held under quota also takes `--no-summary`; the artifact retains its content without claiming it was posted. The summary records the skipped sync, its diagnostic, the round-end retry or explicit no-retry, and the [pending tracker record](../../orch/workflows/dev-start.md#held-tracker-work). Bundled rounds add `--bundled` and one `--item` per sub-issue. See § 11.
 
 **Issue state.** A bundled Linear sub-issue is marked Done (`linear.sh issues update [ISSUE_ID] --state "Done"`) and aggregated by the parent session in § 11. The worktree's top-level managed issue is NOT — it stays In Progress or In Review until the PR merges. GitHub and ad-hoc issues close through the PR body or merge, never here.
 
@@ -358,7 +358,7 @@ Summary: [ISSUE_ID] [✓ or held: payload path]
    .agents/skills/orch/scripts/dev-return-write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [LAST_SUBISSUE_HEAD_SHA] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR]] [--validate-note [TEXT]] --summary-file tmp/bundle-summary-[PARENT_ID].md --bundled --item [N] [DECISION] [REASONING] [--item ...] [--qa-label [LABEL]]... --near-ceiling-base origin/[BASE_BRANCH]
    ```
 
-   If the parent summary is held under § 2.1, append `--no-summary` and name its payload path in the return. Record the sync outcome and owed writes in that summary.
+   If the parent summary is held under § 2.1, append `--no-summary` and name its payload path in the return. Embed the sync outcome and pending tracker record in that summary, including activation, child Done writes and every child summary held by this group. The lane consumes the record before accepting the group or reading its handoff comments.
 
    `--bundled` requires one `--item` per sub-issue result — `DECISION` is Applied, Skipped, or Blocked and `REASONING` non-empty plain text with no backticks — populated from the sub-issue tree. `--commit` is the last sub-issue's HEAD.
 

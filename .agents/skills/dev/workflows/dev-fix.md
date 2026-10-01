@@ -92,7 +92,7 @@ Write the artifact first, per [dev SKILL.md § Round Contract](../SKILL.md#round
 
 If the validation list misses a rule, write `tmp/proposed-rule-[ISSUE_ID].md` with a `### Proposed Rules` heading and the proposal as one bullet. Append `--summary-file tmp/proposed-rule-[ISSUE_ID].md` to the command below. Omit the file and flag when there is no proposal.
 
-For Linear, complete [dev-implement.md § 9.1's deferred reconcile](./dev-implement.md#91-completion-comment) once before the artifact. Record skipped syncs, retry results and still-owed writes in `tmp/linear-round-summary-[ISSUE_ID].md`. Pass that file with `--summary-file` and `--no-summary`; when a proposed-rule file also exists, include its content in the same summary file. An explicit `Linear sync: skip` runs no round-end reconcile.
+For Linear, complete [dev-implement.md § 9.1's deferred reconcile](./dev-implement.md#91-completion-comment) once before the artifact. Record skipped syncs, retry results and the [pending tracker record](../../orch/workflows/dev-start.md#held-tracker-work) in `tmp/linear-round-summary-[ISSUE_ID].md`. Pass that file with `--summary-file` and `--no-summary`; when a proposed-rule file also exists, include its content in the same summary file. Apply [dev-implement.md § 2.1's sync policy](./dev-implement.md#21-claim-and-read-context) to the round-end reconcile.
 
 `[BASE_BRANCH]` is what `.agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]` reports; `--near-ceiling-base` takes it as `origin/[BASE_BRANCH]` because the local branch may sit behind the remote, and in a fresh clone may not exist at all.
 

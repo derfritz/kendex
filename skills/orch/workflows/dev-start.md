@@ -162,6 +162,8 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 
 `A` is the `verdict` field — `accept`, `wait`, or `retry`. The check resolves `[WORKTREE_PATH]/tmp/dev-return-[ISSUE_ID]-[DEV_ROUND_ID].json` and matches its internal `round_id`.
 
+For Linear, when A is `accept`, confirm that the artifact's `.commit` equals the worktree's HEAD, then consume its pending record through [Held tracker work](#held-tracker-work) before the tracker part of B. Apply this to single rounds and each bundled group. Outstanding quota work makes B `held`, not `fail`. Do not accept the group or read its handoff comments until the held work succeeds and B passes.
+
 **Check B** — `B = pass` only when every check passes:
 
 ```bash
@@ -173,6 +175,8 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 `HEAD` must differ from `pre_delegate_sha`, `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands explicit single-PR bundles and audit-created sub-issues worked in this session. `state_ok` expects bundle-expanded sub-issues `Done` and the session-root issue in a pre-merge state (`In Progress` or `In Review`) — never `Done` before merge. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
 
+A quota failure from `validate-completion` takes [Held tracker work](#held-tracker-work), then repeats that same live check. Do not replace it with a cache check or weaken its state and posted-summary requirements. An unposted summary without a pending command, a genuine missing summary, `.all_ok: false`, or a non-quota command failure still blocks acceptance.
+
 A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `round-recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round.
 
 Before B or the check's `reason` routes the round, run [Store Validation Time](#store-validation-time) for every `reason` but `missing` and `invalid`: that artifact passed the schema gate, so its echoed `validate_time` is the round's own. A round the table then accepts, retries, replaces with a fresh round or escalates keeps its validation minutes, and no row below names the step again.
@@ -180,14 +184,26 @@ Before B or the check's `reason` routes the round, run [Store Validation Time](#
 | A (verdict) | B (git/tracker) | Action |
 |---|---|---|
 | `accept` | pass | **Accept** even with no return message. First confirm exact-commit binding — the artifact's `.commit` must equal `git -C [WORKTREE_PATH] rev-parse HEAD`. → Store Proposed Rules, then Store Near-Ceiling Lines, then Store QA State. |
+| `accept` | held | Keep the round and its tracker work with the lane under [Held tracker work](#held-tracker-work). Resume B after success. Do not re-delegate implementation or call the held command a missing step. |
 | `accept` | fail | Re-read ONCE after a brief pause; if still failing, re-delegate only the specific missing step: commit the work, or commit/revert leftover files, or post the summary. Do not proceed. |
 | `wait` | pass | Do NOT re-run the implementation. Send ONE report-only nudge: *"re-run only your completion tail — write your dev-return artifact (`dev-return-write … --round-id [DEV_ROUND_ID]`) and re-report validate status, QA labels, and summary; do NOT re-run the implementation."* Accept only when a valid artifact for THIS round appears. |
+| `wait` | held | Wait for the artifact to the round deadline. Preserve the lane's tracker hold. A missing artifact still follows Round Closure; tracker quota alone never proves a stalled dev round. |
 | `wait` | fail | **Not done.** Wait to the deadline, then escalate per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). |
 | `retry` | any | An artifact for THIS round exists but fails a gate — the check's `reason` names it. For a structurally valid artifact with a failing `validate`, run Store Proposed Rules and Store Near-Ceiling Lines, then end the workflow and report without another validation round. An identity/schema failure gets the report-only tail-rewrite nudge. Never accept, and never treat it as absent. |
 
 Do not import the reviewer's re-delegate-on-invalid rule ([references/artifact-checks.md](../references/artifact-checks.md)).
 
 Each Store subsection below runs whatever the one before it did. `status: no_pr` in Store Proposed Rules ends that subsection, not the accept path.
+
+### Held tracker work
+
+The lane owns pending Linear commands and their payloads until they succeed. This rule covers dev and fix artifacts, single and bundled rounds, live completion checks, and post-merge sync and completion. A dev agent records a quota hold and transfers it in the artifact; it does not retry the mutation.
+
+Keep one pending record at `[WORKTREE_PATH]/tmp/linear-pending-[ISSUE_ID]-[DEV_ROUND_ID].md`; here `[ISSUE_ID]` is the artifact key, not a bundle child. For lane-created post-merge work, use `[MAIN_REPO_ROOT]/tmp/linear-pending-[ISSUE_ID]-merge.md`. Each entry holds the target issue, exact plain command, payload path if any, diagnostic with `Requests-Reset` or `null`, dependency order, and retry outcome (`not attempted`, `succeeded`, or `held`). Keep payloads and command files under the same `tmp/`. The artifact's summary embeds the record and its path, including the command to post a held summary. A `--no-summary` flag alone is not a pending command.
+
+For a returned dev record, read it only from the current round's schema-valid, exact-commit artifact. Replay held writes in dependency order: activation before child completion, child summaries before the parent summary. Run plain `linear.sh` commands through the orch job runner. Wait until the reported reset before retrying once; if no reset is supplied, run a 120-second sleep through that runner first. Record each result before taking the next command. Do not replay a successful write. Other failures block the workflow with their actual diagnostic.
+
+A second quota answer leaves the command held with the lane. Preserve the updated record and report its paths and reset to the overseer; resume this step when the hold clears, not a new dev round. Re-check git binding before resuming acceptance. A held live read or sync uses the same wait and retry route. Completion checks run only after pending writes succeed; a quota hold never counts as a passed check. Post-merge cleanup keeps the lane's state and pending files until tracker work finishes.
 
 ### Store Proposed Rules
 

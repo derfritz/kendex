@@ -88,16 +88,18 @@ Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses before 
 
 ### Resolve a cited artifact
 
-Read a cited repository path when it exists. When it is absent, reconcile the tracker before looking up attachments, even if the workflow's general cache is fresh. If reconciliation fails, stop and report the sync failure; do not treat it as a missing attachment.
+Read a cited repository path when it exists. When it is absent, apply the calling workflow's sync policy before looking up attachments. An explicit `Linear sync: skip`, or confirmed continuation on the lane's reconciled preflight cache after quota or a harness tool-call timeout, uses that cache's attachment inventory without reconcile. An unconfirmed preflight cache blocks this route.
+
+Otherwise reconcile before attachment lookup, even if the general cache is fresh. A failed reconcile stops resolution unless the calling workflow confirms its preflight-cache continuation route; do not treat a sync failure as a missing attachment.
 
 ```bash
-linear.sh sync --reconcile
+linear.sh sync --reconcile  # ordinary route only
 linear.sh cache attachments list [ISSUE_ID]
 ```
 
 Match the original cited repository path against `repo_path`, scoped to that issue or the research/source issue its brief explicitly names. For attachments with no `repo_path`, accept a filename match only when it is unique within that issue. Use an attachment URL in the brief to select the matching `url` when references collide. Read the matching `local_path` under `.cache/linear/attachments/`; keep the repository path as the tracker reference. Resolve companion files, such as a plan's JSON or research metadata, the same way. Do not write a machine's cache path into an issue or delegation for another checkout.
 
-No match leaves the calling workflow's missing-file behavior unchanged. Multiple matches without a distinguishing reference require clarification. A matched attachment whose local file is unreadable is a download failure; report it instead of treating the research as absent. Consumers without attachments keep reading repository files as before.
+No match leaves the calling workflow's missing-file behavior unchanged. Multiple matches without a distinguishing reference require clarification. A matched attachment whose local file is unreadable is a download failure; report it instead of treating the research as absent. Required context blocks on all three outcomes, including on the cache-only route. Consumers without attachments keep reading repository files as before.
 
 ## Blocked Label vs Issue Relations
 

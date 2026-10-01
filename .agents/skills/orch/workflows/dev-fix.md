@@ -158,6 +158,8 @@ Cancel ends the workflow; a selection goes to § 2.
 
    `--expect-items-from-round` reads the step-4 record. It requires the artifact's `items[]` to cover that record's set, each item once with no unknowns or duplicates, valid decisions, and non-empty reasoning. Exit 2 means the expected set cannot be established. Never recreate the record after delegation and never fall back to `--expect-items`; mint and delegate a fresh round.
 
+   For a Linear artifact A accepts, confirm exact-commit binding, then consume its pending tracker record through [dev-start § Held tracker work](dev-start.md#held-tracker-work) before accepting the fix. A quota hold keeps this round with the lane; it never re-delegates the fix as a missing step. Non-quota failures still block.
+
    **Check B**:
 
    ```bash

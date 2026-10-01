@@ -73,16 +73,17 @@ assert_not_contains "rate-limited 400 is not a generic HTTP error" "$out" "HTTP 
 echo "=== quota errors carry the response's Requests-Reset header ==="
 # Linear's reset header is an opaque server timestamp, not a local delay.
 for row in \
-  '400|Requests-Reset: 1790749380000|1790749380000' \
-  '429|requests-reset: 1790750580000|1790750580000' \
-  '429||null'; do
-  IFS='|' read -r code header expected <<<"$row"
+  '400|Requests-Reset: 1790749380000|1790749380000|{"error":"Rate limited. Try again later.","Requests-Reset":"1790749380000"}' \
+  '429|requests-reset: 1790750580000|1790750580000|{"error":"Rate limited. Try again later.","Requests-Reset":"1790750580000"}' \
+  '429||null|{"error":"Rate limited. Try again later.","Requests-Reset":null}'; do
+  IFS='|' read -r code header expected expected_object <<<"$row"
   make_env "$TMP_BASE/reset-$code-$expected" "$code" "$RL_BODY" "$header"$'\r\n'
   reset_rc=0
   reset_out="$(run_linear "$TMP_BASE/reset-$code-$expected" statuses list)" || reset_rc=$?
   assert_ne "quota $code with reset $expected fails the call" "$reset_rc" 0
-  reset_value="$(jq -r '.["Requests-Reset"]' <<<"$reset_out")"
-  assert_eq "quota $code carries reset $expected beside the error" "$reset_value" "$expected"
+  quota_object="$(jq -cS . <<<"$reset_out")"
+  expected_object="$(jq -cS . <<<"$expected_object")"
+  assert_eq "quota $code carries reset $expected beside the error" "$quota_object" "$expected_object"
 done
 
 echo "=== failed team lookup propagates the API failure ==="
