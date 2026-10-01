@@ -321,9 +321,9 @@ Use the output as `MAIN_REPO_ROOT`.
 
 2. **Sync the tracker and close a finished container** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 
-   Consume any pending tracker record before this step. Every quota answer in this step, including sync, issue completion and container closure, takes [dev-start § Held tracker work](dev-start.md#held-tracker-work). Keep the post-merge commands and payloads under `[MAIN_REPO_ROOT]/tmp/`. If work remains held after the retry, leave tracker completion pending, report the record in § 6, and continue the non-tracker post-merge steps. Resume this step before claiming tracker completion. Other failures keep their existing blocking routes.
+   Consume pending records and route every quota answer in this step through [dev-start § Held tracker work](dev-start.md#held-tracker-work). While held, report in § 6 and continue non-tracker steps. Resume here before claiming tracker completion.
 
-   When the lane's policy forbids reconciles, record the explicit skip and use its confirmed preflight cache instead of the sync below. Otherwise require successful sync before the cache reads and completion commands.
+   A lane that forbids reconcile records the skip and uses its confirmed preflight cache. Otherwise the sync below must pass.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh sync --reconcile
@@ -347,7 +347,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **The container closes LAST.** If `[ISSUE]` was the final open child of a container parent, complete the container now. Skip when no `[ISSUE]` was extracted.
 
-   a. Read `.parent_id` (`cache issues get [ISSUE]`). Empty → step 3. b. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR; without the marker, children or an `agent:multi` label make it a CONTAINER. Not a container → step 3. c. Close the container through the serialized helper. If the lane forbids reconcile, keep this command pending: the helper reconciles internally. Never replace serialized closure with a direct parent Done write.
+   a. Read `.parent_id` (`cache issues get [ISSUE]`). Empty → step 3. b. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR; without the marker, children or an `agent:multi` label make it a CONTAINER. Not a container → step 3. c. Close the container through the serialized helper. Hold this helper when reconcile is forbidden; never write parent Done directly.
 
       ```bash
       env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
@@ -429,7 +429,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
 6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. A project's install record (`.kendex-lock.json`) is recorded by the route its own instructions name, never re-recorded by the lane after a merge or a restack. On failure, report the command and its diagnostic in § 6 and keep the worktree. Once it passes, close the item out under the main checkout's state directory, `tmp/` under `[MAIN_REPO_ROOT]` by default, before worktree removal. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive; otherwise drop the `--archive` pair:
 
-   With tracker work still held under [dev-start § Held tracker work](dev-start.md#held-tracker-work), run project verification but keep workflow state and the worktree. Report the pending record paths in § 6 instead of taking close-out or removal.
+   While tracker work is held, verify the project but keep workflow state and the worktree. Report pending record paths in § 6.
 
    ```bash
    .agents/skills/orch/scripts/workflow-state remove [STATE_KEY] --archive [WORKTREE_PATH]/tmp
