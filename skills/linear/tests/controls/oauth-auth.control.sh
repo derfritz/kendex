@@ -89,7 +89,7 @@ control_replace scripts/lib/auth.sh 1 \
     '          (if $kind == "app-token" then "" else "" end))}'\'' >&2'
 
 # Mint controls pair each defect with the first assertion it reddens.
-# Output-only defects stay at the command boundary: the cached-pair caller
+# Output-only defects stay at the command boundary: the application-pair caller
 # needs the helper's JSON to reach the auth-mint cases without aborting.
 while IFS=$'\t' read -r expectation path old replacement; do
     control_expect "$expectation"

@@ -43,7 +43,7 @@ Planning, research, roadmap, and audit files under `docs/` are tracked repositor
 
 Keep repository-relative references in the brief. Linear attachments are the fallback when a fresh clone lacks a cited file. Resolve it through [linear SKILL.md § Resolve a cited artifact](../linear/SKILL.md#resolve-a-cited-artifact).
 
-Carry each planning artifact's repository reference, readable path, and source issue separately. A same-checkout delegation receives the readable path for analysis and the reference for its output. A handoff to another checkout carries the reference and the issue that holds the attachment; the receiver resolves its own readable path through the Linear rule above. Saved plans and tracker text contain references and source issues, never cache paths. A source issue identifies storage, not the roadmap's hierarchy origin. With no published source issue, keep the existing local-until-creation flow.
+Carry each planning artifact's repository reference, readable path, and source issue separately. A same-checkout delegation receives the readable path for analysis and the reference for its output. A handoff to another checkout carries the reference and the issue that holds the attachment; the receiver resolves its own readable path through the Linear rule above. Saved plans and tracker text contain references and source issues, never downloaded paths. A source issue identifies storage, not the roadmap's hierarchy origin. With no published source issue, keep the existing local-until-creation flow.
 
 For a GitHub audit, put the produced text artifact in the created or updated issue body, and include the text of any cited planning input needed for pickup. Report binary inputs that have no tracker upload route as incomplete; never claim a local-only file is available to another lane. A run without artifacts retains its existing tracker behavior.
 
@@ -71,24 +71,23 @@ TPM analysis workflows, each returning JSON per its schema: [tpm-cycle-plan](wor
 - Run workflow sections in order. Skip only on an explicit **Skip if** condition, never on your own scope assessment.
 - `<delegation_format>` and `<output_format>` are literal templates: fill `[PLACEHOLDERS]`, drop lines whose placeholders are empty, add nothing.
 - Send a user-visible `<output_format>` report as a normal assistant message first, then invoke the question tool separately with only the question and short option labels. Never paste the report into question text or options.
-- The Linear cache holds the whole workspace: `sync` sends no team filter, and `cache issues list` returns no team through its `safe`, `compact`, `ids` or `table` formatter, so a row read through those cannot be checked against `--team X` (only `--format=raw` carries `.team.name`). Team scope per path: § Scope by Path.
-- Sync the Linear cache before a workflow's first cache read: `sync --reconcile` in a run that mutates the tracker, `sync --if-stale 15` in a read-only lookup. That sync is the freshness mechanism; a cached read itself enforces presence, so a read that comes back missing halts the workflow and reports the sync failure, never a partial result, a live-only substitute, or a retry against the unsynced cache.
-- Resolve tracker context once per run (audit-issues § 1.2) and route every preflight, fetch, and mutation through it. A GitHub-tracked run must not require Linear installation, sync, or authentication; where GitHub lacks a Linear concept, degrade in a documented note, never silently.
+- The live issue listing is workspace-wide unless filtered; `issues list` returns no team through its `safe`, `compact`, `ids` or `table` formatter, so a row read through those cannot be checked against `--team X` (only `--format=raw` carries `.team.name`). Team scope per path: § Scope by Path. Read the live inventory through the Linear CLI. A failed or partial API page chain stops the workflow.
+- Resolve tracker context once per run (audit-issues § 1.2) and route every preflight, fetch, and mutation through it. A GitHub-tracked run must not require Linear installation or authentication; where GitHub lacks a Linear concept, degrade in a documented note, never silently.
 - Before any issue create or label update, run the label preflight in [references/labels.md](references/labels.md) against the live inventory and project taxonomy; any § Validation failure there halts before mutation.
 - A project declares its taxonomy in one of the sources [references/labels.md](references/labels.md) names: inline in its kendex manifest under `[skill-instructions]` for this skill (`kendex.toml`, or `kendex-local.toml` in a source-catalog checkout), which renders it into § Project Instructions above, or in a project document or reference file those instructions link to. A project that declares none in any of them has no required categories to enforce.
 - In multi-issue analysis, keep verification context per issue. One issue's PR, branch, or resolved path set never scopes another's checks.
 
 ## Scope by Path
 
-The Linear cache is workspace-wide, so each path states whether it resolves the team scope (tpm-audit § 1.1.1) and what it filters. Silence is not inheritance: a new mode adds its row.
+The live issue listing is workspace-wide, so each path states whether it resolves the team scope (tpm-audit § 1.1.1) and what it filters. Silence is not inheritance: a new mode adds its row.
 
 | Path | Resolves | Filters |
 |------|----------|---------|
 | tpm-audit `project`, `team` | yes | § 1.3 projects, § 1.4 input set, § 1.5 comparison set |
 | tpm-audit `issues`, Linear | yes | § 1.5 comparison set; a § 1.4 input issue outside scope halts |
-| tpm-audit `issues`, GitHub | n/a, reads no Linear cache | n/a |
+| tpm-audit `issues`, GitHub | n/a, reads no Linear data | n/a |
 | tpm-audit `single`, Linear | yes | § 1.3 projects, § 14 title list |
-| tpm-audit `single`, GitHub | n/a, reads no Linear cache | n/a |
+| tpm-audit `single`, GitHub | n/a, reads no Linear data | n/a |
 | tpm-audit `project-order` | yes | § 11 initiatives, projects, and per-project issues |
 | tpm-roadmap-plan | yes, § 1.1 | § 1.4 projects, § 1.5 comparison set |
 | tpm-cycle-plan | **no** | **no**. `session-status` picks the active project workspace-wide, and every later read is scoped to that pick |

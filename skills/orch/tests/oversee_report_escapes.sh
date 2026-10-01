@@ -2,7 +2,7 @@
 # lib/escapes.sh: the escape count behind oversee-report's Escapes line.
 #
 # Each case builds a checkout whose origin holds merges and reverts at chosen
-# times, stubs the Linear CLI's sync, label list and issue list, and calls
+# times, stubs the Linear CLI's live label list and issue list, and calls
 # escapes_read at a fixed NOW. It asserts the per-week lines the renderer
 # reads, or the return status and the cause an unread count names.
 set -euo pipefail
@@ -33,23 +33,16 @@ NOW="$(at 2026-09-30T12:00:00Z)"
 # this repository's pull request.
 REPO=owner/repo
 
-# The Linear CLI: `sync` copies $ESCAPES_UPSTREAM, where set, over the cache
-# $ESCAPES_ISSUES, or fails under $ESCAPES_SYNC_FAIL; the label list answers
-# $ESCAPES_LABELS; the issue list answers the cache, each issue's `team`
-# standing for the team.name the real cache filters --team on and the safe
-# shape drops; an issue list that is no array passes through whole. Any other
-# call fails, an empty --team among them.
+# The CLI reads the current fixture inventory on each call. Team filtering
+# matches the live API request; safe output drops the team field.
 LINEAR="$TMP_ROOT/linear"
 cat > "$LINEAR" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-  "sync --if-stale 15")
-    [[ -z "${ESCAPES_SYNC_FAIL:-}" ]] || { echo "linear stub: sync failed" >&2; exit 1; }
-    [[ -z "${ESCAPES_UPSTREAM:-}" ]] || cp -- "$ESCAPES_UPSTREAM" "$ESCAPES_ISSUES" ;;
-  "cache labels list --format=safe") cat -- "$ESCAPES_LABELS" ;;
-  "cache issues list --all-projects --max --include-archived --format=safe")
+  "labels list --max --format=safe") cat -- "$ESCAPES_LABELS" ;;
+  "issues list --all-projects --max --include-archived --format=safe")
     jq 'if type == "array" then map(del(.team)) else . end' -- "$ESCAPES_ISSUES" ;;
-  "cache issues list --all-projects --max --include-archived --team "?*" --format=safe")
+  "issues list --all-projects --max --include-archived --team "?*" --format=safe")
     jq --arg team "$8" 'if type == "array" then map(select(.team == $team) | del(.team)) else . end' -- "$ESCAPES_ISSUES" ;;
   *) echo "linear stub: unexpected call: $*" >&2; exit 1 ;;
 esac
@@ -192,16 +185,6 @@ escapes_commit "$TMP_ROOT/other" "$(at 2026-09-30T06:00:00Z)" "Revert \"feat: a 
 git -C "$TMP_ROOT/other" push -q origin main
 assert_eq "$(count "$LIB" "$TMP_ROOT/stale" | tail -n 1)" "2026-09-28	2" "a revert on origin that this checkout has not fetched is counted"
 
-# The count syncs a stale cache first: a bug filed since the last sync, here
-# KEN-B18, is counted.
-stale_cache() {
-  local cache
-  cache="$(mktemp "$TMP_ROOT/cache.XXXXXX")" || return 1
-  jq '[.[] | select(.id != "KEN-B18")]' "$ESCAPES_ISSUES" > "$cache" || return 1
-  count "$1" "$WORLD" "" ESCAPES_ISSUES="$cache" ESCAPES_UPSTREAM="$ESCAPES_ISSUES" | tail -n 1
-}
-assert_eq "$(stale_cache "$LIB")" "2026-09-28	1" "a bug the cache's last sync missed is counted"
-
 # The base branch is the one origin's HEAD names, here trunk; the world has
 # no main on origin.
 TRUNK="$TMP_ROOT/trunk"
@@ -234,11 +217,8 @@ git -C "$HANGS" remote add origin ssh://example.invalid/owner/repo
 git -C "$HANGS" config core.sshCommand "sleep 2; :"
 NOT_EXECUTABLE="$TMP_ROOT/linear-not-executable"
 : > "$NOT_EXECUTABLE"
-SLOW_SYNC="$TMP_ROOT/linear-slow-sync"
-printf '#!/usr/bin/env bash\n[[ "$1" == sync ]] && sleep 2\nexit 1\n' > "$SLOW_SYNC"
-chmod +x "$SLOW_SYNC"
 FAILING="$TMP_ROOT/linear-failing"
-printf '#!/usr/bin/env bash\n[[ "$1" == sync ]] && exit 0\necho "cache corrupt" >&2\nexit 1\n' > "$FAILING"
+printf '#!/usr/bin/env bash\necho "API unavailable" >&2\nexit 1\n' > "$FAILING"
 chmod +x "$FAILING"
 NOT_A_LIST="$TMP_ROOT/not-a-list.json"
 echo '{"issues": []}' > "$NOT_A_LIST"
@@ -260,19 +240,17 @@ UNREAD=(
   "$NO_ORIGIN||rc=1 unread=git fetch origin main failed|"
   "$LOCAL_ORIGIN||rc=1 unread=the repository's owner/name did not resolve|GH_REPO="
   "$WORLD|$NOT_EXECUTABLE|rc=1 unread=no Linear CLI|"
-  "$WORLD||rc=1 unread=Linear sync failed|ESCAPES_SYNC_FAIL=1"
-  "$WORLD|$FAILING|rc=1 unread=Linear cache read failed|"
+  "$WORLD|$FAILING|rc=1 unread=Linear live read failed|"
   "$WORLD||rc=1 unread=no Linear label named bug|ESCAPES_LABELS=$NO_BUG_LABEL"
   "$WORLD||rc=1 unread=the Linear label list did not parse|ESCAPES_LABELS=$NOT_A_LIST"
   "$WORLD||rc=1 unread=the git log or the bug list did not parse|ESCAPES_ISSUES=$NOT_A_LIST"
   "$WORLD||rc=1 unread=the clock reads before the cap week 2026-09-28|NOW=$(at 2026-09-21T12:00:00Z)"
 )
-# The fetch and the sync are bounded only where `timeout` or `gtimeout`
+# The fetch is bounded only where `timeout` or `gtimeout`
 # exists; stock macOS ships neither. Each bound is one second, so each row
 # waits that long.
 if [[ -n "$REAL_TIMEOUT" ]]; then
   UNREAD+=("$HANGS||rc=1 unread=git fetch origin main timed out|ESCAPE_FETCH_SECONDS=1"
-    "$WORLD|$SLOW_SYNC|rc=1 unread=Linear sync timed out|ESCAPE_SYNC_SECONDS=1"
     "$HANGS||rc=1 unread=git fetch origin main timed out|ESCAPE_FETCH_SECONDS=1 PATH=$GTIMEOUT_ONLY")
 fi
 for row in "${UNREAD[@]}"; do
@@ -308,15 +286,13 @@ CONTROLS=(
   'every-team|world|${LINEAR_TEAM:+--team "$LINEAR_TEAM"}|${LINEAR_TEAM:+}'
   'bare-only|world|select(.repo == null or (.repo | ascii_downcase) == ($repo | ascii_downcase))|select(.repo == null)'
   'window-only|later_cap|((cap >= from)) || from=$cap|true'
-  'no-sync|stale_cache|"$tracker" sync --if-stale|true --if-stale'
+  'inverted-live-label-read|world|if ! "$tracker" labels list|if "$tracker" labels list'
   'main-only|on_trunk|"$ESCAPES_LIB_DIR/../resolve-base-branch" "$root"|echo main'
 )
 hangs() { count "$1" "$HANGS" "" ESCAPE_FETCH_SECONDS=1; }
-slow_sync() { count "$1" "$WORLD" "$SLOW_SYNC" ESCAPE_SYNC_SECONDS=1; }
 gtimeout_hangs() { count "$1" "$HANGS" "" ESCAPE_FETCH_SECONDS=1 PATH="$GTIMEOUT_ONLY"; }
 if [[ -n "$REAL_TIMEOUT" ]]; then
   CONTROLS+=('unbounded-fetch|hangs|escapes_bounded "$bound" "$ESCAPE_FETCH_SECONDS" env|env'
-    'unbounded-sync|slow_sync|escapes_bounded "$bound" "$ESCAPE_SYNC_SECONDS" "$tracker"|"$tracker"'
     'timeout-only|gtimeout_hangs|for candidate in timeout gtimeout; do|for candidate in timeout; do')
 fi
 for row in "${CONTROLS[@]}"; do

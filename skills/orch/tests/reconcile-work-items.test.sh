@@ -1,21 +1,32 @@
 #!/usr/bin/env bash
 # Pins for reconcile-work-items: the read-only sweep
 # reports the three write-without-read-back shapes and stays quiet on their
-# healthy twins. Fully offline: fixture cache + stubbed PR probe.
+# healthy twins. Offline live-inventory response and stubbed PR probe.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-RW="$SKILL_DIR/scripts/reconcile-work-items"
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)" || exit 1
+[[ -d "$TMP" && ! -L "$TMP" ]] || exit 1
+TMP="$(cd -- "$TMP" && pwd -P)" || exit 1
+trap 'rm -rf -- "${TMP:?}"' EXIT
+mkdir -p "$TMP/.agents/skills/orch" "$TMP/.agents/skills/linear/scripts"
+cp -R -- "$SKILL_DIR/scripts" "$TMP/.agents/skills/orch/"
+RW="$TMP/.agents/skills/orch/scripts/reconcile-work-items"
+cat >"$TMP/.agents/skills/linear/scripts/linear.sh" <<'SH'
+#!/bin/bash
+set -euo pipefail
+[[ "$*" == 'issues list --max --format=raw' ]] || exit 9
+jq -cn --slurpfile rows "$PWD/issues-response.json" '{issues:{nodes:$rows[0]}}'
+SH
+chmod +x "$TMP/.agents/skills/linear/scripts/linear.sh"
 
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 R="$TMP/repo"
-mkdir -p "$R/.cache/linear"
+mkdir -p "$R"
 git -C "$R" init -q -b main 2>/dev/null || git -C "$R" init -q
 
 now="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
@@ -46,7 +57,7 @@ issue() { # ID TITLE STATE_NAME STATE_TYPE UPDATED [PARENT] [DESC]
   issue "T-15" "trashed parked"          "Todo"        "unstarted" "$now"
   issue "T-16" "ship the widget (One PR)" "In Review"  "started"   "$now"
   issue "T-17" "done bundle child"       "Done"        "completed" "$now" "T-16"
-} | jq -s 'map(if .identifier == "T-15" then .trashed = true else . end)' >"$R/.cache/linear/issues.json"
+} | jq -s 'map(if .identifier == "T-15" then .trashed = true else . end)' >"$R/issues-response.json"
 
 cat >"$TMP/gh-stub" <<'STUB'
 #!/usr/bin/env bash
@@ -73,7 +84,7 @@ STUB
 chmod +x "$TMP/gh-stub"
 
 OUT=""; RC=0
-OUT="$(cd "$R" && GH_REPO=elsewhere/other GITHUB_REPOSITORY=elsewhere/other RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" GH_REPO=elsewhere/other GITHUB_REPOSITORY=elsewhere/other RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 
 [ "$RC" -eq 1 ] && pass "findings exit 1" || fail "exit code" "rc=$RC out=$OUT"
 assert_contains "$OUT" "container-parked issue=T-1" "the parked container is reported"
@@ -91,69 +102,79 @@ assert_not_contains "$OUT" "T-15" "a trashed row stays out of every check"
 
 # Clean fixture: only healthy rows -> exit 0 with the clean line.
 jq '[.[] | select(.identifier == "T-5" or .identifier == "T-6" or .identifier == "T-7" or .identifier == "T-14" or .identifier == "T-11")]' \
-  "$R/.cache/linear/issues.json" >"$R/.cache/linear/issues2.json"
-mv "$R/.cache/linear/issues2.json" "$R/.cache/linear/issues.json"
+  "$R/issues-response.json" >"$R/issues-response2.json"
+mv "$R/issues-response2.json" "$R/issues-response.json"
 OUT=""; RC=0
-OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && case "$OUT" in *"clean"*) true ;; *) false ;; esac \
   && pass "a healthy tracker exits 0 with the clean line" || fail "clean run" "rc=$RC out=$OUT"
 
-# A malformed row inside an array-shaped cache: the scan must die loudly,
+# A malformed row inside an array-shaped inventory: the scan must die loudly,
 # never end early as a clean pass.
-printf '[{"identifier":"T-BAD"}, 42]' >"$R/.cache/linear/issues.json"
+printf '[{"identifier":"T-BAD"}, 42]' >"$R/issues-response.json"
 OUT=""; RC=0
-OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && pass "a malformed cache row is a loud collection error" || fail "malformed row" "rc=$RC out=$OUT"
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && pass "a malformed inventory row is a loud collection error" || fail "malformed row" "rc=$RC out=$OUT"
 
 # Object-shaped but incomplete rows must not read as a clean tracker: a row
 # without identifier/state carries nothing the scans can inspect.
-printf '[{}]' >"$R/.cache/linear/issues.json"
+printf '[{}]' >"$R/issues-response.json"
 OUT=""; RC=0
-OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && pass "an empty-object row is a config error, never clean" || fail "empty-object row" "rc=$RC out=$OUT"
-printf '[{"identifier":"T-1","state":{"name":"Todo"}}]' >"$R/.cache/linear/issues.json"
+printf '[{"identifier":"T-1","state":{"name":"Todo"}}]' >"$R/issues-response.json"
 OUT=""; RC=0
-OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && pass "a row missing state.type is a config error" || fail "missing state.type" "rc=$RC out=$OUT"
 
 # A started row without a usable timestamp must be a config error: GNU date
 # parses an empty field as midnight today, which would quietly read as fresh.
-printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":""}]' >"$R/.cache/linear/issues.json"
+printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":""}]' >"$R/issues-response.json"
 OUT=""; RC=0
-OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && pass "a started row with an empty updatedAt is a config error, never fresh" || fail "empty updatedAt" "rc=$RC out=$OUT"
-printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":"   "}]' >"$R/.cache/linear/issues.json"
+printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":"   "}]' >"$R/issues-response.json"
 OUT=""; RC=0
-OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && pass "a whitespace-only updatedAt is a config error (GNU date parses it as midnight)" || fail "blank updatedAt" "rc=$RC out=$OUT"
-printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":""}]' >"$R/.cache/linear/issues.json"
+printf '[{"identifier":"T-1","title":"t","state":{"name":"In Progress","type":"started"},"parent":null,"description":""}]' >"$R/issues-response.json"
 OUT=""; RC=0
-OUT="$(cd "$R" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && pass "a started row with no updatedAt key at all is a config error" || fail "missing updatedAt key" "rc=$RC out=$OUT"
 
-# Missing cache: loud config error, never a clean pass.
-rm "$R/.cache/linear/issues.json"
+# Missing inventory: loud config error, never a clean pass.
+rm "$R/issues-response.json"
 OUT=""; RC=0
-OUT="$(cd "$R" && "$RW" 2>&1)" || RC=$?
-[ "$RC" -eq 2 ] && pass "a missing cache is a config error, never clean" || fail "missing cache" "rc=$RC out=$OUT"
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" "$RW" 2>&1)" || RC=$?
+[ "$RC" -eq 2 ] && pass "a missing inventory is a config error, never clean" || fail "missing inventory" "rc=$RC out=$OUT"
+
+# The live API read must not convert a failed request into an empty inventory.
+source "$TEST_DIR/lib/growth-state.sh"
+cp -- "$RW" "${RW}-mutant"
+mutate_file "${RW}-mutant" \
+  'RAW=$("$LINEAR" issues list --max --format=raw) || config_error collection-failed source=Linear' \
+  'RAW=$("$LINEAR" issues list --max --format=raw) || RAW='"'"'{"issues":{"nodes":[]}}'"'"''
+RC=0
+OUT="$(cd "$R" && env -i PATH="$PATH" HOME="$TMP" "${RW}-mutant" 2>&1)" || RC=$?
+assert_eq "$RC" 0 "control: replacing a failed live read with an empty list defeats the collection-error assertion"
 
 # --- settings-file threshold -------------------------------------------------
 # RECONCILE_STALE_HOURS set in the project's kendex.settings.toml (not the
 # environment) must reach the sweep: a 2h-old In Progress item is quiet at the
 # 24h default and a finding at a 1h threshold.
 R2="$TMP/settings-repo"
-mkdir -p "$R2/.cache/linear"
+mkdir -p "$R2"
 git -C "$R2" init -q
 TWO_H_AGO="$(date -u -d '2 hours ago' '+%Y-%m-%dT%H:%M:%S.000Z' 2>/dev/null || date -j -u -v-2H '+%Y-%m-%dT%H:%M:%S.000Z')"
-cat >"$R2/.cache/linear/issues.json" <<JSON
+cat >"$R2/issues-response.json" <<JSON
 [{"identifier":"VST-900","title":"stale candidate","state":{"name":"In Progress","type":"started"},"parent":null,"description":"","updatedAt":"$TWO_H_AGO"}]
 JSON
 RC=0
-OUT="$(cd "$R2" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R2" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 [ "$RC" -eq 0 ] && pass "default 24h threshold stays quiet at 2h" || fail "default threshold" "rc=$RC out=$OUT"
 printf '[env]\nRECONCILE_STALE_HOURS = "1"\n' >"$R2/kendex.settings.toml"
 RC=0
-OUT="$(cd "$R2" && RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
+OUT="$(cd "$R2" && env -i PATH="$PATH" HOME="$TMP" RECONCILE_GH_CLI="$TMP/gh-stub" "$RW" 2>&1)" || RC=$?
 { [ "$RC" -eq 1 ] && grep -q "VST-900" <<<"$OUT"; } && pass "settings-file RECONCILE_STALE_HOURS reaches the sweep" || fail "settings-file threshold" "rc=$RC out=$OUT"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"

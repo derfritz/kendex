@@ -153,7 +153,7 @@ Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree co
 **Skip if** no `[ISSUE]` was extracted, `TRACKER=github`, or workflow state for `[STATE_KEY]` records `children_detached`: [submit-pr.md](submit-pr.md) § 2 step 5 already ran this detach, before its arm.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues children [ISSUE] --pending --recursive
+.agents/skills/linear/scripts/linear.sh issues children [ISSUE] --pending --recursive
 ```
 
 Partition by `state_type`: `backlog` and `unstarted` are **safe** (`[SAFE_IDS]`); anything else is **active**. Both empty → § 5.
@@ -163,7 +163,7 @@ Active children pause the merge and ask the user per orphan — was the work lan
 `[SAFE_IDS]` still empty → § 5. Otherwise apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before rebundling them under a new parent:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE]
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE]
 ```
 
 Read `.title`, `.project.id`, and the joined label names for the new bundle, and take `[BUNDLE_PRIORITY]` as the highest priority across `[SAFE_IDS]` (Linear: `1`=Urgent…`4`=Low, lower wins; default `3`). Build `[BUNDLE_DESC]` per `.agents/skills/project-management/templates/parent-issue-template.md`, with a `## Sub-Issues` list and a `## Context` line naming the detachment. Its `**Reached by**` line is this rebundle run: `this merge-pr rebundle, detaching pending children from [ISSUE] before merge`. A rebundle parent is structural, so the create passes no `--review-born`.
@@ -320,18 +320,15 @@ Use the output as `MAIN_REPO_ROOT`.
 
 2. **Sync the tracker and close a finished container** — **Linear only**. Skip the WHOLE step for GitHub work items: resolve the tracker first; an `issue-N` key in any casing is a GitHub item.
 
-   ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh sync --reconcile
-   ```
-
+   
    The lane owns tracker completion; the overseer does not substitute for it.
 
    Complete `[ISSUE]` only when its Done-when is on the default branch, not only because a merged PR carries its number, and give every remainder from a cut its own issue or bundle before completion.
 
-   When `[ISSUE]` was extracted, read it from the synced cache; a completed state needs no write, and for a live state run the completion command only after the default-branch Done-when check passes.
+   When `[ISSUE]` was extracted, read it from the live API; a completed state needs no write, and for a live state run the completion command only after the default-branch Done-when check passes.
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE]
+   [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues get [ISSUE]
    ```
 
    ```bash
@@ -342,13 +339,13 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **The container closes LAST.** If `[ISSUE]` was the final open child of a container parent, complete the container now. Skip when no `[ISSUE]` was extracted.
 
-   a. Read `.parent_id` (`cache issues get [ISSUE]`). Empty → step 3. b. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR; without the marker, children or an `agent:multi` label make it a CONTAINER. Not a container → step 3. c. Close the container through the serialized helper:
+   a. Read `.parent_id` (`issues get [ISSUE]`). Empty → step 3. b. Fetch the parent with its bundle. A `(one PR)` title marker keeps it single-PR; without the marker, children or an `agent:multi` label make it a CONTAINER. Not a container → step 3. c. Close the container through the serialized helper:
 
       ```bash
       env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/container-close [MAIN_REPO_ROOT] [PARENT_ID]
       ```
 
-      `closed [PARENT_ID]` → record the closure in § 6 with every stderr diagnostic from the helper. If this container has a container parent, re-run the step-2 sync and repeat a-c for that parent.
+      `closed [PARENT_ID]` → record the closure in § 6 with every stderr diagnostic from the helper. If this container has a container parent, re-run the step-2 live read and repeat a-c for that parent.
 
       `deferred [CHILD_IDS...]` → record `container [PARENT_ID] stays open (pending: [CHILD_IDS])` in § 6 and continue to step 3. When `[ISSUE]` is among `[CHILD_IDS]`, report `closure for [ISSUE] has not propagated; rerun merge-pr`. A bare `deferred` means the 120-second lock wait expired; report that and continue. On a non-zero exit, carry its diagnostic into § 6, do not climb to another parent, and continue to step 3; the container stays OPEN and the close is safe to repeat once the diagnostic's cause is gone — a failed `gh pr list` among them — so report `container [PARENT_ID] stays open; rerun merge-pr to close it`. Re-running costs nothing when the parent is already complete: the helper short-circuits to `closed`.
 

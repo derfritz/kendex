@@ -18,16 +18,13 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 
 3. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate.
 
-4. Refresh a stale cache before the first read here and in §§ 1-2. Planning itself only reads; the § 1 research-spike branch delegates to research-issue, which reconciles again before it creates anything:
+4. Read tracker context live:
 
-   ```bash
-   .agents/skills/linear/scripts/linear.sh sync --if-stale 15
-   ```
-
+   
 5. With `--origin-issue`, fetch it and keep `id`, `title`, `project`, `description`, `children`:
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues get [ORIGIN_ISSUE_ID]
+   .agents/skills/linear/scripts/linear.sh issues get [ORIGIN_ISSUE_ID]
    ```
 
 6. With `--planner-handoff`, read the file and keep its plan path, recommended approach, proposed phases or issue candidates, any TPM handoff recommendation, and referenced issue or project names. Never run `planner` from here. A handoff skips no gate, no TPM step, no approval, and no creation confirmation.
@@ -40,10 +37,10 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 
 1. Search existing artifacts on disk first — the project's research and plan directories (`docs/research/`, `docs/plans/`, or the project's equivalents) by `FEATURE` keywords.
 
-2. Then classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument, and when several match, ask the user which applies; a selected artifact ends this gate → § 2. Only when the disk search finds nothing, query the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`cache labels list --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2; do not query a hard-coded fallback label.
+2. Then classify a match with the Inputs rule (research vs SPEC) exactly as an `@[path]` argument, and when several match, ask the user which applies; a selected artifact ends this gate → § 2. Only when the disk search finds nothing, query the tracker: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`labels list --format=safe`), then query it. If no unambiguous assignable label exists, skip the lookup and continue to § 2; do not query a hard-coded fallback label.
 
    ```bash
-   .agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
+   .agents/skills/linear/scripts/linear.sh issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
    ```
 
 3. Filter for `FEATURE` keywords. A match supplies `RESEARCH_PATH` and its issue ID as `SOURCE_ISSUE`. Resolve and classify it under the Inputs rule before § 2. An inline or local-disk selection uses the same rule to set the readable path; skipped research leaves the path fields null.
@@ -215,7 +212,7 @@ Write both files. When publishing research/spec inputs with the plan to an origi
 - `docs/roadmaps/roadmap-[FEATURE].json` — the TPM JSON with § 5 adjustments applied and `context.plan_path` set to the markdown path.
 - `docs/roadmaps/roadmap-[FEATURE].md` — the § 5 report, plus a `**Plan data**: docs/roadmaps/roadmap-[FEATURE].json` line and the creation date.
 
-Set `CREATE_COMMAND` to `roadmap create @docs/roadmaps/roadmap-[FEATURE].md`. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to both files and the research/spec inputs. With an origin issue, reconcile and publish there; only after success, append `--source-issue [ORIGIN_ISSUE.id]`. Without one, carry the repository files and command into roadmap-create for publication to its issues. Return `CREATE_COMMAND` unchanged in the report and to the managed caller.
+Set `CREATE_COMMAND` to `roadmap create @docs/roadmaps/roadmap-[FEATURE].md`. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to both files and the research/spec inputs. With an origin issue, publish there; only after success, append `--source-issue [ORIGIN_ISSUE.id]`. Without one, carry the repository files and command into roadmap-create for publication to its issues. Return `CREATE_COMMAND` unchanged in the report and to the managed caller.
 
 <output_format>
 

@@ -1,5 +1,7 @@
 # Micro Workflow
 
+Linear activation and completion quota holds follow [Linear workflow actions](../../linear/patterns/workflow-actions.md#quota-holds).
+
 The tier for an item whose whole change is a few lines. One agent reads the item, edits, commits, pushes, opens the pull request and waits the merge out: no dev subagent, no review cycle, no QA cycle, and no full validation battery. [oversee.md](oversee.md) § Item Tier picks the tier through `item-tier`, and § 4 holds the branch to the classifier that script reads. A `small` item runs [small.md](small.md); every other item runs [start.md](start.md).
 
 | Command | Flow |
@@ -34,8 +36,7 @@ Resolve `TRACKER` and `ISSUE_REF` from `[ISSUE_ID]` per [SKILL.md § Tracker Res
 Its output is `[MAIN_REPO_ROOT]`. Read the item. Linear:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
 ```
 
 ```bash

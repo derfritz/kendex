@@ -16,7 +16,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 unset DEV_VALIDATE_RANGE_CMD
 
 # branch-size-check reads the allowance through the Linear CLI beside its own
-# skill; the stand-in answers `cache issues get ID --format=raw` from the
+# skill; the stand-in answers `issues get ID --format=raw` from the
 # fixture's cache, the same shape branch_size_check.sh uses.
 mkdir -p "$TMP_ROOT/linear/scripts"
 cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
@@ -24,7 +24,7 @@ cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
 set -eu
 [[ "${1:-}" == cache && "${2:-}" == issues && "${3:-}" == get ]] \
   || { echo "linear stand-in: unsupported call: $*" >&2; exit 2; }
-row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
+row="$(jq -c --arg id "$3" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
 [[ -n "$row" ]] || { echo "Error: issue $4 not found in cache" >&2; exit 1; }
 jq --null-input --argjson issue "$row" '{issue: $issue}'
 SH

@@ -1,5 +1,7 @@
 # Start Workflow
 
+Linear activation and completion quota holds follow [Linear workflow actions](../../linear/patterns/workflow-actions.md#quota-holds).
+
 Prepare one work item from the main repo. Never watches or manages other sessions.
 
 | Command | Flow |
@@ -59,11 +61,10 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 ## 3. Resolve Work Item
 
-**Linear** — sync before read:
+**Linear**: read live:
 
 ```bash
-.agents/skills/linear/scripts/linear.sh sync --reconcile
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID] --with-bundle
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID] --with-bundle
 ```
 
 Apply the Ancestor gate ([references/skill-rules.md § Coordination](../references/skill-rules.md#coordination)) to the `--with-bundle` output.

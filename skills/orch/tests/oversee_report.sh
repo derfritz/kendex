@@ -85,7 +85,7 @@ case "$verb" in
   *) echo "unexpected gh call: $verb" >&2; exit 1 ;;
 esac
 EOF
-# The Linear CLI: `cache issues get ID` answers linear-ID.json in the safe
+# The Linear CLI: `issues get ID` answers linear-ID.json in the safe
 # shape under --format=safe, and nested as {issue: ...} otherwise, the raw
 # shape a project's LINEAR_FORMAT=raw gives a call that names no format. A
 # merge-on-read-ID.json file is a pull request that merges while ID is read:
@@ -95,10 +95,10 @@ cat > "$TMP_ROOT/bin/linear" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
   "sync --if-stale 15") exit 0 ;;
-  "cache labels list --format=safe") echo '[{"name": "bug"}]'; exit ;;
-  "cache issues list --all-projects --max --include-archived --format=safe") cat "$CASE/bugs.json"; exit ;;
+  "labels list --format=safe") echo '[{"name": "bug"}]'; exit ;;
+  "issues list --all-projects --max --include-archived --format=safe") cat "$CASE/bugs.json"; exit ;;
 esac
-[[ "$1 $2 $3" == "cache issues get" && -f "$CASE/linear-$4.json" ]] || { echo "No cache entry for $4" >&2; exit 1; }
+[[ "$1 $2" == "issues get" && -f "$CASE/linear-$4.json" ]] || { echo "No cache entry for $4" >&2; exit 1; }
 if [[ -f "$CASE/merge-on-read-$4.json" ]]; then
   jq -c --slurpfile pr "$CASE/merge-on-read-$4.json" '. + $pr' "$CASE/merged.json" > "$CASE/merged.next" || exit 1
   mv -- "$CASE/merged.next" "$CASE/merged.json" || exit 1

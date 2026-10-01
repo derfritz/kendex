@@ -17,7 +17,7 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # The check reads the issue through the Linear CLI beside its own skill, and
 # that CLI refuses Bash 3.2, which the macOS suite leg runs. A stand-in at the
-# sibling path answers `cache issues get ID --format=raw` from the fixture's
+# sibling path answers `issues get ID --format=raw` from the fixture's
 # cache the way the CLI does: {"issue": row} on stdout, or a stderr line and
 # exit 1 when the cache holds no such issue. The check under test runs from
 # a directory of links to the shipped scripts beside it, the shape the
@@ -28,7 +28,7 @@ cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
 set -eu
 [[ "${1:-}" == cache && "${2:-}" == issues && "${3:-}" == get ]] \
   || { echo "linear stand-in: unsupported call: $*" >&2; exit 2; }
-row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
+row="$(jq -c --arg id "$3" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
 [[ -n "$row" ]] || { echo "Error: issue $4 not found in cache" >&2; exit 1; }
 jq -n --argjson issue "$row" '{issue: $issue}'
 SH

@@ -87,8 +87,6 @@ if [[ "$*" == *'-K -'* ]]; then
     if [[ "${MODE:-}" == always-401 || ( "${MODE:-}" == once-401 && ! -f "$LOG/denied" ) ]]; then
         touch "$LOG/denied"
         printf '{}___HTTP_CODE___401'
-    elif [[ "$config" == *SyncIssueAttachments* ]]; then
-        printf '{"data":{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.txt","title":"docs/findings.txt","issue":{"identifier":"TEAM-1"}}]}}}___HTTP_CODE___200'
     else
         printf '{"data":{"viewer":{"id":"actor-id","name":"Actor name"}}}___HTTP_CODE___200'
     fi
@@ -126,7 +124,7 @@ assert_ne 'a second 401 refuses' "$RC" 0
 count=$(wc -l <"$LOG/mints")
 assert_eq 'a second 401 never renews again' "${count//[[:space:]]/}" 5
 
-# A new secret cannot reuse the token minted by an old one.
+# Each CLI process mints its own token. Rotation must reach that mint.
 run_oauth_request request LINEAR_CLIENT_SECRET=rotated
 assert_eq 'secret rotation succeeds' "$RC" 0
 header=$(tail -n 1 "$LOG/auth")

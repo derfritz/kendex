@@ -1,5 +1,7 @@
 # Post Summary Workflow
 
+Linear activation and completion quota holds follow [Linear workflow actions](../../linear/patterns/workflow-actions.md#quota-holds).
+
 Post the session summary to the git host and issue tracker, plus selective handoff comments to downstream issues.
 
 | Command | Behavior |
@@ -68,7 +70,7 @@ Omit empty sections. Render Orchestration stopped only when `post_pr_stop` is no
 **Skip if** `TRACKER=github` → § 3
 
 ```bash
-.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
+.agents/skills/linear/scripts/linear.sh issues get [ISSUE_ID]
 ```
 
 Read `.blocks`. Post a handoff comment to a downstream issue only when its description references files this PR touched, a decision it should know about was created, or an API or interface it depends on changed. Simply being unblocked earns nothing.

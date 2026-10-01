@@ -60,9 +60,8 @@ root="$FAKE_LINEAR_ROOT"
 resource="$1"; action="$2"; shift 2
 printf '%s:%s\n' "$resource" "$action" >> "$root/linear.calls"
 case "$resource:$action" in
-  sync:--reconcile) exit 0 ;;
-  cache:issues)
-    sub="$1"; shift
+  issues:get|issues:children)
+    sub="$action"
     case "$sub" in
       get)
         state="$(cat "$root/parent.state")"; type=started

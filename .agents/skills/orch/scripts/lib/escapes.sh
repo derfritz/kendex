@@ -9,13 +9,13 @@
 #     `Revert` or `revert`, other than the revert's own merge; or
 #   - a `Regressed-by` line in the description of a Linear issue labelled
 #     bug, in any case, and created at or after the merge, read from the
-#     linear skill's cache. The line starts the description or follows a
+#     live Linear API. The line starts the description or follows a
 #     newline, its key plain (`Regressed-by: #N`) or bold as the issue
 #     template writes it (`**Regressed-by**: #N`), and may name several
 #     numbers, comma-separated. A number anywhere else in the issue, its
 #     title or a Source or Reached by line citing where a finding came from,
 #     is not a finding. Where LINEAR_TEAM is set, only an issue in that team
-#     counts: the cache holds every team the API key reaches, and a bare
+#     counts: the API can return every team the app reaches, and a bare
 #     `#N` in another team's bug names another repository's pull request.
 # A number names the pull request bare (`#N`) or qualified with this
 # repository's own owner/name (`owner/name#N`), the one lib/gh-repo.sh
@@ -28,7 +28,7 @@
 # the next.
 #
 # Nothing here is stored: every read derives the count from git and the
-# cache again.
+# live API again.
 
 ESCAPES_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
 # shellcheck source=gh-repo.sh
@@ -43,14 +43,8 @@ ESCAPE_REACH=1209600
 # Escapes line compares against. The same week the setting fell to 1 in every
 # consumer repository's own settings, so it is each install's cap week too.
 ESCAPE_CAP_WEEK=2026-09-28
-# How long the fetch of the base branch, and the Linear sync, may run before
-# the count reads unread, where `timeout` or `gtimeout` exists. A sync that
-# outlasts its bound, a full one on a large workspace, reads unread until a
-# `linear.sh sync` run by hand completes.
+# Bound the base-branch fetch when coreutils is installed.
 ESCAPE_FETCH_SECONDS=60
-ESCAPE_SYNC_SECONDS=120
-# How old, in minutes, the Linear cache may be before the count syncs it.
-ESCAPE_SYNC_MINUTES=15
 
 # escapes_bounded BOUND SECONDS COMMAND... — COMMAND under a SECONDS bound
 # that BOUND, `timeout` or `gtimeout`, holds, answering 124 where it cuts it
@@ -71,9 +65,7 @@ escapes_bounded() {
 # Monday, for the ESCAPE_WINDOW_WEEKS weeks ending with the one NOW falls in,
 # or from ESCAPE_CAP_WEEK where that week is older. ROOT is the checkout
 # whose base branch is read, fetched first so the count is not the last
-# fetch's; TRACKER is the Linear CLI, whose cache is synced first where it is
-# older than ESCAPE_SYNC_MINUTES; SCRATCH a directory the reads are written
-# to. LINEAR_TEAM, the project's own, narrows the issue read where set.
+# fetch's; TRACKER is the live Linear CLI; SCRATCH holds the request results. LINEAR_TEAM, the project's own, narrows the issue read where set.
 # Returns 1 with ESCAPE_UNREAD naming the read that failed, and ESCAPE_WEEKS
 # empty: a count missing either source is not printed as a number.
 ESCAPE_WEEKS=""
@@ -133,26 +125,15 @@ escapes_read() {
     ESCAPE_UNREAD="no Linear CLI"
     return 1
   fi
-  # The cache answers only what its last sync saw: a bug filed since then is
-  # missing from a read that exits 0.
-  escapes_bounded "$bound" "$ESCAPE_SYNC_SECONDS" "$tracker" sync --if-stale "$ESCAPE_SYNC_MINUTES" \
-    >/dev/null 2>"$scratch/escapes-linear.err" || rc=$?
-  if [[ "$rc" == "$cut" ]]; then
-    ESCAPE_UNREAD="Linear sync timed out"
-    return 1
-  elif ((rc != 0)); then
-    ESCAPE_UNREAD="Linear sync failed"
-    return 1
-  fi
   # --format=safe pins the shapes against the project's LINEAR_FORMAT. A
   # workspace spells the label `bug` or `Bug`, and one with neither never
   # read a bug half, so it reads unread rather than 0. An unset LINEAR_TEAM
   # sends no --team, which the CLI refuses empty.
-  if ! "$tracker" cache labels list --format=safe >"$scratch/escapes-labels.json" 2>"$scratch/escapes-linear.err" \
-    || ! "$tracker" cache issues list --all-projects --max --include-archived \
+  if ! "$tracker" labels list --max --format=safe >"$scratch/escapes-labels.json" 2>"$scratch/escapes-linear.err" \
+    || ! "$tracker" issues list --all-projects --max --include-archived \
       ${LINEAR_TEAM:+--team "$LINEAR_TEAM"} --format=safe \
       >"$scratch/escapes-issues.json" 2>"$scratch/escapes-linear.err"; then
-    ESCAPE_UNREAD="Linear cache read failed"
+    ESCAPE_UNREAD="Linear live read failed"
     return 1
   fi
   if ! bug_label="$(jq -r 'if type != "array" then error("the label list is not one JSON array") else

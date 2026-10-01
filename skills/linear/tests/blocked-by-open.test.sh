@@ -18,8 +18,7 @@ mkdir -p "$TMP_ROOT/.agents/skills" "$TMP_ROOT/bin"
 cp -R "$SKILL_DIR" "$TMP_ROOT/.agents/skills/linear"
 git -C "$TMP_ROOT" init -q -b main
 
-# This root's own cache is the subject, so it replaces the assert lib's default
-# sandbox — still scratch, so the exit verdict's containment check holds.
+# The isolated checkout keeps the live-query fixture inside scratch.
 
 main='{"id":"issue-1","identifier":"KEN-1","title":"dependent","description":"","state":{"name":"Todo","type":"unstarted"},"assignee":null,"project":{"id":"project-1","name":"Project"},"projectMilestone":null,"cycle":null,"parent":null,"team":{"name":"Kendex"},"labels":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"priority":0,"estimate":null,"sortOrder":0,"url":"","createdAt":"","updatedAt":"","archivedAt":null,"trashed":false,"children":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"relations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]},"inverseRelations":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"rel-open","type":"blocks","issue":{"id":"issue-2","identifier":"KEN-2","title":"open","state":{"name":"Working","type":"started"}}},{"id":"rel-done","type":"blocks","issue":{"id":"issue-3","identifier":"KEN-3","title":"done","state":{"name":"Shipped","type":"completed"}}},{"id":"rel-canceled","type":"blocks","issue":{"id":"issue-4","identifier":"KEN-4","title":"canceled","state":{"name":"Abandoned","type":"canceled"}}}]}}'
 child="$(jq -cn --argjson base "$main" '$base | .id = "issue-6" | .identifier = "KEN-6" | .title = "child" | .parent = {identifier: "KEN-1"}')"
@@ -59,7 +58,7 @@ case "$query" in
   ;;
 esac
 
-inverse_count="$(count_literal "$compact" 'inverseRelations{')"
+inverse_count="$(count_literal "$compact" 'inverseRelations(first:10){')"
 shared_count="$(count_literal "$compact" "$EXPECTED_INVERSE_QUERY")"
 if [[ "$INVERSE_HAS_TYPE" != "true" || "$inverse_count" != "$shared_count" ]]; then
   response="$(jq 'walk(if type == "object" and has("inverseRelations") then .inverseRelations.nodes |= map(del(.issue.state.type)) else . end)' <<<"$response")"
@@ -112,13 +111,13 @@ projection_count=0
 projection_sites=""
 expected_projection_count="$(tr -d '[:space:]' <<<"$ISSUE_BLOCKED_BY_FIELDS" | awk '
   { text = text $0 }
-  END { while (match(text, /inverseRelations\{pageInfo\{hasNextPageendCursor\}nodes\{[^{}]*issue\{/)) { count++; text = substr(text, RSTART + RLENGTH) } print count + 0 }
+  END { while (match(text, /inverseRelations\(first:10\)\{pageInfo\{hasNextPageendCursor\}nodes\{[^{}]*issue\{/)) { count++; text = substr(text, RSTART + RLENGTH) } print count + 0 }
 ')"
 while IFS= read -r source; do
   [[ -n "$source" ]] || continue
   source_count="$(tr -d '[:space:]' <"$source" | awk '
     { text = text $0 }
-    END { while (match(text, /inverseRelations\{pageInfo\{hasNextPageendCursor\}nodes\{[^{}]*issue\{/)) { count++; text = substr(text, RSTART + RLENGTH) } print count + 0 }
+    END { while (match(text, /inverseRelations\(first:10\)\{pageInfo\{hasNextPageendCursor\}nodes\{[^{}]*issue\{/)) { count++; text = substr(text, RSTART + RLENGTH) } print count + 0 }
   ')"
   if (( source_count > 0 )); then
     projection_count=$((projection_count + source_count))
