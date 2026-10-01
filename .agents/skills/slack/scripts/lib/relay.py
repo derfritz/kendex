@@ -16,13 +16,15 @@ An event moves no position. It writes no `seen` or `thread` line; the
 catch-up writes both, and a start with no seeds writes the `seen` line of
 the binding moment. The catch-up runs on the first poll after every connect
 and reconnect, and on the next poll after an event whose delivery was
-refused. It reads the
+refused. Each root keeps refused live events in memory and retries them on
+every poll, independently of the history lookback, until delivery succeeds.
+It reads the
 channel's history from the journal's position or SLACK_THREAD_DAYS back,
 whichever is older, delivers the top-level messages past the position, and
 reads the thread of every open ask and of every live parent whose latest
 reply moved. So a message sent while the relay was disconnected, one whose
 envelope never arrived, and one acknowledged before a stop cut its delivery
-off all land on a catch-up, and lane-mail's delivery id judges any repeat.
+off land on a catch-up within that lookback, and lane-mail's delivery id judges any repeat.
 The connection opens before the catch-up reads, so no message falls between
 them.
 
@@ -184,6 +186,9 @@ class RootRelay:
         self.last_ok: Optional[float] = None
         self.post_failed: Optional[Refusal] = None
         self.names: Dict[str, str] = {}
+        # Socket Mode acknowledges before delivery. History cannot recover
+        # an old-thread reply, so its root retains the event until handled.
+        self.pending_live: Dict[str, Dict] = {}
         # False until a catch-up has read the channel since the last connect
         # or the last refused event delivery.
         self.caught_up = False
@@ -230,6 +235,8 @@ class RootRelay:
     def poll(self, bot_user: str) -> None:
         self.ready()
         self.post_failed = None
+        for message in list(self.pending_live.values()):
+            self.on_message(message, bot_user)
         if not self.caught_up:
             self.catch_up(bot_user)
         self.mark_seen()
@@ -301,12 +308,14 @@ class RootRelay:
 
     def on_message(self, message: Dict, bot_user: str) -> None:
         """One live message event, without a thread-age or parent-origin gate."""
-        self.ready()
         ts = str(message["ts"])
+        self.pending_live[ts] = message
+        self.ready()
         thread_ts = str(message.get("thread_ts") or ts)
         if thread_ts == ts:
             self.bind_file_share(message)
         self.handle(message, bot_user)
+        self.pending_live.pop(ts)
         self.mark_seen()
 
     def bind_file_share(self, message: Dict) -> None:
@@ -318,10 +327,13 @@ class RootRelay:
                                     parent=self.parent_of(message, "bot", envelope))
 
     def read_replies(self, thread: Thread, bot_user: str) -> None:
+        # setup --take may discover a parent with replies from before the
+        # binding. Catch-up never replays those replies as new directives.
+        oldest = max(thread.seen, self.binding.bound_at, key=float)
         replies = list(
-            self.api.paged("conversations.replies", "messages", channel=self.channel, ts=thread.ts, oldest=thread.seen)
+            self.api.paged("conversations.replies", "messages", channel=self.channel, ts=thread.ts, oldest=oldest)
         )
-        replies = [r for r in replies if r["ts"] != thread.ts and float(r["ts"]) > float(thread.seen)]
+        replies = [r for r in replies if r["ts"] != thread.ts and float(r["ts"]) > float(oldest)]
         replies.sort(key=lambda m: float(m["ts"]))
         for reply in replies:
             self.handle(reply, bot_user)
@@ -864,11 +876,11 @@ class Relay:
 
     def envelope(self, socket: WebSocket, text: str) -> None:
         """One envelope: acknowledged by its envelope_id before anything
-        else, since the catch-up delivers what a stop after the
-        acknowledgement cuts off, and the journal skips an envelope Slack
+        else, since the catch-up covers a stop after the acknowledgement
+        within its lookback, and the journal skips an envelope Slack
         sent again. A `disconnect` drops the connection for a
         new one; a message event goes to the root bound to its channel, and
-        a refused delivery leaves that root's catch-up due; every other
+        a refused delivery stays pending in its root and leaves its catch-up due; every other
         envelope stops at the acknowledgement."""
         try:
             envelope = json.loads(text)
@@ -894,3 +906,4 @@ class Relay:
                 raise
             print_refusal(err)
             root.caught_up = False
+            root.record_status(False, f"{err.key}={err.value}", self.connection, self.since, self.connection_error)

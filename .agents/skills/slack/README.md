@@ -125,7 +125,7 @@ A question answered in the overseer's chat shows in its Slack thread as "Answere
 - The bot token and the app-level token live in the private env file or the process environment, never in a settings file, the binding, the journal or a post.
 - The relay reads and writes one channel per checkout, the one `setup` bound. `setup --take` binds a private channel only, and a relay given two checkouts bound to one channel refuses to start. `post --channel` reaches another channel only from the command line.
 - Every text and file leaving the host passes the secret-value pattern the orch skill ships. A match is refused and never sent, and the report stays on disk.
-- The journal and the binding hold identifiers only: channel ids, message stamps, user ids, envelope ids and file ids. No message body is copied.
+- The binding stores channel and owner identifiers, names and the binding time, not message text. The journal stores delivery identifiers and parent context, including an excerpt of the parent's first 300 characters with newlines collapsed.
 - A file an owner sends is kept under `tmp/slack/files/`, readable by the checkout's user alone. Only that user removes it.
 - Anyone in the channel reads what the overseer posts. Only the owners steer.
 

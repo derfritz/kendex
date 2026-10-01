@@ -398,6 +398,8 @@ assert_eq "$RC=$(jq -r '.last_poll_ok' "$GAMMA/tmp/slack/status.json")" "0=true"
 
 # --- a first start: Slack from the binding moment, the mailbox from its newest envelope -----------
 for n in 1 2 3; do sk_inject C777 U001 "history $n" >/dev/null; done
+PRE_PARENT="$(sk_inject C777 U001 'An adopted topic.')"
+PRE_REPLY="$(sk_inject C777 U001 'A reply before binding.' "$PRE_PARENT")"
 DELTA="$(sk_new_root delta)"
 sk_lm "$DELTA" notice --item overseer --to owner --file "$(sk_text n5 'Old notice.')" >/dev/null
 mkdir -p "$DELTA/tmp/progress-reports"
@@ -406,16 +408,45 @@ sk_lm "$DELTA" notice --item overseer --to owner --attach "$DELTA/tmp/progress-r
 sk_lm "$DELTA" ask --item overseer --to owner --file "$(sk_text q8 'Still open?')" --options a,b --recommend a >/dev/null
 sk_run -- setup --root "$DELTA" --take C777
 assert_eq "$RC" 0 "a channel with history is adopted"
+POST_REPLY="$(sk_inject C777 U001 'A reply after binding.' "$PRE_PARENT")"
 sk_poll "$DELTA"
-assert_eq "$RC=$(directives "$DELTA" | wc -l | tr -d ' ')" "0=0" "the channel's earlier messages are not delivered"
+assert_eq "$RC=$(directives "$DELTA")" "0=C777:$POST_REPLY A reply after binding." \
+  "setup --take delivers only the post-binding reply under an older parent"
 assert_eq "$(asks C777 'Old notice.')=$(asks C777 'Old report.')=$(asks C777 'Still open?')" "0=0=1" \
   "the mailbox's past notices and report are not posted; its open ask is"
 assert_eq "$(jq -r 'select(.t == "start") | .at' "$(sk_journal "$DELTA")" | wc -l | tr -d ' ')" "1" "the start is journaled"
 H4="$(sk_inject C777 U001 'history 4')"
 sk_lm "$DELTA" notice --item overseer --to owner --file "$(sk_text n7 'New notice.')" >/dev/null
 sk_poll "$DELTA"
-assert_eq "$(directives "$DELTA")" "C777:$H4 history 4" "the next message is routed"
+assert_eq "$(directives "$DELTA" | tail -n 1)" "C777:$H4 history 4" "the next message is routed"
 assert_eq "$(asks C777 'New notice.')" "1" "a notice written after the start is posted"
+
+# --- an external parent missed during disconnect is discovered by catch-up ------
+while read -r mode want; do
+  DISCOVERY="$(sk_new_root "discovery-$mode")"
+  sk_bind "$DISCOVERY"
+  DISCOVERY_CH="$(sk_channel "$DISCOVERY")"
+  sk_poll "$DISCOVERY"
+  sk_run -- post --root "$DISCOVERY" --text 'An external topic.'
+  assert_eq "$RC" 0 "$mode: slack post creates the external parent"
+  DISCOVERY_PARENT="$(sk_state ".messages.${DISCOVERY_CH}[-1].ts")"
+  DISCOVERY_REPLY="$(sk_inject "$DISCOVERY_CH" U001 'Missed while disconnected.' "$DISCOVERY_PARENT")"
+  if [ "$mode" = control ]; then
+    sk_mutant discovery relay.py 'if thread_ts not in self\.state\.threads:' 'if thread_ts not in self.state.threads and False:'
+  fi
+  sk_poll "$DISCOVERY"
+  if [ -f "$(sk_box "$DISCOVERY")/to-lane.jsonl" ]; then
+    DISCOVERED="$(jq -s --arg d "$DISCOVERY_CH:$DISCOVERY_REPLY" --arg ts "$DISCOVERY_PARENT" \
+      '[.[] | select(.delivery_id == $d and .text == "Missed while disconnected." and .thread_ts == $ts and .parent == {ts:$ts,author:"bot",excerpt:"An external topic."})] | length' "$(sk_box "$DISCOVERY")/to-lane.jsonl")"
+  else
+    DISCOVERED=0
+  fi
+  assert_eq "$RC=$DISCOVERED" "0=$want" "$mode: catch-up discovers an unknown external parent and carries the reply pointer"
+  sk_bin_reset
+done <<'ROWS'
+production 1
+control 0
+ROWS
 
 # --- a notice under an owner message past the horizon posts once across compaction --------------------
 # A fresh notice keeps the old message's thread live through compaction.
@@ -858,8 +889,17 @@ sk_mutant seed relay.py 'self\.journal\.append\(t="seen", ts=self\.binding\.boun
 THETA="$(sk_new_root theta)"
 sk_run -- setup --root "$THETA" --take C777
 sk_poll "$THETA"
-assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "$(sk_state '[.messages.C777[] | select(.user == "U001")] | length')" \
+assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "$(sk_state '[.messages.C777[] | select(.user == "U001" and .thread_ts == null)] | length')" \
   "control: the history seed at zero, every earlier owner message in the channel is delivered"
+sk_bin_reset
+
+# The binding floor is independent of the top-level history seed.
+sk_mutant binding-floor relay.py 'oldest = max\(thread.seen, self.binding.bound_at, key=float\)' 'oldest = thread.seen'
+FLOOR_ROOT="$(sk_new_root binding-floor-control)"
+sk_run -- setup --root "$FLOOR_ROOT" --take C777
+sk_poll "$FLOOR_ROOT"
+assert_has "$(directives "$FLOOR_ROOT")" "C777:$PRE_REPLY A reply before binding." \
+  "control: removing the reply binding floor replays a pre-binding owner reply"
 sk_bin_reset
 
 
