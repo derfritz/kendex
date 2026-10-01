@@ -18,16 +18,18 @@ list_attachments() {
     local ref="${1:-}" id result records issue comments links
     [[ -n "$ref" ]] || { echo 'linear-attachments: missing=issue-id' >&2; return 1; }
     id=$(resolve_issue_id "$ref") || return 1
-    local query='query IssueAttachments($id: ID!, $after: String) {
-        attachments(filter: {issue: {id: {eq: $id}}}, first: 50, after: $after) {
-            pageInfo { hasNextPage endCursor }
-            nodes { id url title issue { identifier } }
+    local query='query IssueAttachments($id: String!, $after: String) {
+        issue(id: $id) {
+            attachments(first: 50, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes { id url title issue { identifier } }
+            }
         }
     }'
     local variables
     variables=$(jq -cn --arg id "$id" '{id: $id}') || return 1
-    result=$(graphql_pages "$query" "$variables" attachments) || return 1
-    records=$(jq -c '[.attachments.nodes[] | {id, url, source: .issue.identifier,
+    result=$(graphql_pages "$query" "$variables" issue.attachments) || return 1
+    records=$(jq -c '[.issue.attachments.nodes[] | {id, url, source: .issue.identifier,
         context: "attachment", filename: (.title | split("/") | last),
         repo_path: (if (.title | contains("/")) then .title else null end)}]' <<<"$result") || return 1
     issue=$("$BASH" "$SCRIPT_DIR/issues.sh" get "$ref" --format=raw) || return 1
