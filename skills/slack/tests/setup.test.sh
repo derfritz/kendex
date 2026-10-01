@@ -79,8 +79,6 @@ sk_run -- setup --root "$IOTA" --take C900
 assert_eq "$RC=$ERR1" "2=slack: channel-changed=$IOTA channel=$IOTA_CH new=C900 fix=stop the relay and move tmp/slack/journal.jsonl aside, then run setup again" \
   "a rebind to another channel while a journal stands is refused with the remedy"
 assert_eq "$(sk_channel "$IOTA")" "$IOTA_CH" "the binding keeps its channel"
-sk_bind "$IOTA"
-assert_eq "$RC=$(sk_channel "$IOTA")" "0=$IOTA_CH" "a setup to the same channel with a journal is allowed"
 KAPPA="$(sk_new_root kappa)"
 sk_ctl /_test/fault '{"method": "conversations.invite", "error": "cant_invite", "times": 1}' >/dev/null
 sk_run -- setup --root "$KAPPA"

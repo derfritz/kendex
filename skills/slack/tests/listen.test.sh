@@ -408,10 +408,7 @@ sk_lm "$DELTA" notice --item overseer --to owner --attach "$DELTA/tmp/progress-r
 sk_lm "$DELTA" ask --item overseer --to owner --file "$(sk_text q8 'Still open?')" --options a,b --recommend a >/dev/null
 sk_run -- setup --root "$DELTA" --take C777
 assert_eq "$RC" 0 "a channel with history is adopted"
-POST_REPLY="$(sk_inject C777 U001 'A reply after binding.' "$PRE_PARENT")"
 sk_poll "$DELTA"
-assert_eq "$RC=$(directives "$DELTA")" "0=C777:$POST_REPLY A reply after binding." \
-  "setup --take delivers only the post-binding reply under an older parent"
 assert_eq "$(asks C777 'Old notice.')=$(asks C777 'Old report.')=$(asks C777 'Still open?')" "0=0=1" \
   "the mailbox's past notices and report are not posted; its open ask is"
 assert_eq "$(jq -r 'select(.t == "start") | .at' "$(sk_journal "$DELTA")" | wc -l | tr -d ' ')" "1" "the start is journaled"
@@ -513,7 +510,7 @@ mv "$(sk_journal "$DELTA")" "$SK_TMP/delta-journal.aside"
 sk_poll "$DELTA"
 assert_eq "$RC=$(asks C777 'New notice.')=$(asks C777 'Old notice.')" "0=1=0" "after the journal is moved aside no notice is posted again"
 assert_eq "$(asks C777 'Still open?')" "2" "the open ask is posted once more, so its thread is bound again"
-assert_eq "$(directives "$DELTA" | wc -l | tr -d ' ')" "2" "the re-read channel lands nothing twice"
+assert_eq "$(directives "$DELTA" | wc -l | tr -d ' ')" "1" "the re-read channel lands nothing twice"
 
 # --- two roots bound to one channel are refused at start ---------------------------------------
 # Two checkouts with one directory name get one default channel name, so
@@ -885,22 +882,31 @@ sk_poll "$ETA"
 assert_eq "$(asks "$(sk_channel "$ETA")" 'Before the start.')" "1" "control: the start horizon removed, a notice from before the start posts"
 sk_bin_reset
 
-sk_mutant seed relay.py 'self\.journal\.append\(t="seen", ts=self\.binding\.bound_at\)' 'self.journal.append(t="seen", ts="0")'
-THETA="$(sk_new_root theta)"
-sk_run -- setup --root "$THETA" --take C777
-sk_poll "$THETA"
-assert_eq "$(directives "$THETA" | wc -l | tr -d ' ')" "$(sk_state '[.messages.C777[] | select(.user == "U001" and .thread_ts == null)] | length')" \
-  "control: the history seed at zero, every earlier owner message in the channel is delivered"
-sk_bin_reset
-
-# The binding floor is independent of the top-level history seed.
-sk_mutant binding-floor relay.py 'oldest = max\(thread.seen, self.binding.bound_at, key=float\)' 'oldest = thread.seen'
-FLOOR_ROOT="$(sk_new_root binding-floor-control)"
-sk_run -- setup --root "$FLOOR_ROOT" --take C777
-sk_poll "$FLOOR_ROOT"
-assert_has "$(directives "$FLOOR_ROOT")" "C777:$PRE_REPLY A reply before binding." \
-  "control: removing the reply binding floor replays a pre-binding owner reply"
-sk_bin_reset
+# One binding owns adoption, repeat setup and delivery progress independently.
+while read -r mode want; do
+  LIFE="$(sk_new_root "lifetime-$mode")"
+  sk_lm "$LIFE" ask --item overseer --to owner --file "$(sk_text lifetime 'Lifetime ask?')" --options yes,no --recommend no >/dev/null
+  case "$mode" in seed) sk_mutant seed relay.py 'self\.journal\.append\(t="seen", ts=self\.binding\.bound_at\)' 'self.journal.append(t="seen", ts="0")' ;; floor) sk_mutant floor relay.py 'oldest = max\(thread.seen, self.binding.bound_at, key=float\)' 'oldest = thread.seen' ;; esac
+  sk_run -- setup --root "$LIFE" --take C777
+  sk_poll "$LIFE"
+  LIFE_ASK="$(sk_state '[.messages.C777[] | select(.text | contains("Lifetime ask?"))][-1].ts')"
+  QUEUED="$(sk_inject C777 U001 queued "$PRE_PARENT")"
+  ANSWER="$(sk_inject C777 U001 yes "$LIFE_ASK")"
+  BOUND="$(jq -r .bound_at "$LIFE/tmp/slack/binding.json")"
+  if [ "$mode" = repeat ]; then
+    sk_mutant repeat verbs.py 'bound_before.bound_at if bound_before else f"\{time.time\(\):.6f\}"' 'f"{time.time():.6f}"'
+  fi
+  sk_run SLACK_OWNERS="$OWNER" -- setup --root "$LIFE" --take C777
+  sk_poll "$LIFE"
+  assert_eq "$(jq -sr --arg pre "$PRE_REPLY" --arg root "$PRE_PARENT" --arg q "$QUEUED" --arg a "$ANSWER" '[any(.[]; .delivery_id == ("C777:"+$pre)), any(.[]; .delivery_id == ("C777:"+$root)), any(.[]; .delivery_id == ("C777:"+$q)), any(.[]; .delivery_id == ("C777:"+$a) and .kind == "answer")] | @json' "$(sk_box "$LIFE")/to-lane.jsonl")=$(jq -r --arg bound "$BOUND" '.bound_at == $bound' "$LIFE/tmp/slack/binding.json")" \
+    "$want" "$mode: the stable binding excludes prior messages and retains queued directives and answers"
+  sk_bin_reset
+done <<'ROWS'
+production [false,false,true,true]=true
+floor [true,false,true,true]=true
+seed [false,true,true,true]=true
+repeat [false,false,false,false]=false
+ROWS
 
 
 # A one-shot fault must hit this ask, not a prior row's pending retry.

@@ -269,7 +269,8 @@ class RootRelay:
         if not messages or str(messages[0]["ts"]) != thread_ts:
             raise Refusal("slack-api-failed", f"conversations.replies parent={thread_ts} missing")
         message = messages[0]
-        parent = self.parent_of(message, "bot" if message.get("bot_id") else "owner")
+        envelope = thread.envelope if thread is not None and thread.kind in {"ask", "notice"} else ""
+        parent = self.parent_of(message, "bot" if message.get("bot_id") else "owner", envelope)
         self.journal.append(t="parent", ts=thread_ts, parent=parent)
         return parent
 
@@ -327,8 +328,7 @@ class RootRelay:
                                     parent=self.parent_of(message, "bot", envelope))
 
     def read_replies(self, thread: Thread, bot_user: str) -> None:
-        # setup --take may discover a parent with replies from before the
-        # binding. Catch-up never replays those replies as new directives.
+        # Binding owns the lower boundary; thread.seen owns delivery progress.
         oldest = max(thread.seen, self.binding.bound_at, key=float)
         replies = list(
             self.api.paged("conversations.replies", "messages", channel=self.channel, ts=thread.ts, oldest=oldest)

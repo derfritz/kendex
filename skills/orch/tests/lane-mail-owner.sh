@@ -317,6 +317,12 @@ INVALID_POINTER="$(text invalid-parent '{"ts":"1.1","author":"other","excerpt":"
 lm send --item overseer --directive --file "$(text reply 'Wrong author.')" --thread-ts 1.1 --parent "$INVALID_POINTER"
 assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$INVALID_POINTER" "a parent outside Slack's owner or bot kinds is refused"
 
+# Missing jq must name the dependency before parsing a readable parent.
+BASH_BIN="$(command -v bash)"
+RC=0
+OUT="$(env -i PATH= "$BASH_BIN" "$LANE_MAIL" send --item overseer --directive --file "$POINTER" --thread-ts 1.1 --parent "$POINTER" 2>"$TMP_ROOT/err")" || RC=$?
+assert_eq "$RC=$(sed -n '1p' "$TMP_ROOT/err")" "2=lane-mail: command-missing=jq" "a threaded send names missing jq, not the readable parent"
+
 # --- events -------------------------------------------------------------------
 new_repo events
 owner_ask 'Cut the scanner?' cut,keep cut 0

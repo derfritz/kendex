@@ -49,6 +49,25 @@ ASK_TS="$(sk_state ".messages.${CH}[] | select(.text | contains(\"Proceed?\")) |
 ANSWER="$(sk_inject "$CH" U001 yes "$ASK_TS")"
 sk_event "$ROOT" "$CH" "$ANSWER"
 assert_eq "$(jq -r --arg d "$CH:$ANSWER" 'select(.delivery_id == $d) | [.kind, has("thread_ts"), has("parent")] | @json' "$(sk_box "$ROOT")/to-lane.jsonl")" '["answer",false,false]' "an open ask still resolves without a pointer"
+# Retained relay roots have envelopes before their parent cache is populated.
+mkdir -p "$ROOT/tmp/progress-reports"
+printf '# Report\n' > "$ROOT/tmp/progress-reports/replay.md"
+sk_lm "$ROOT" notice --item overseer --to owner --attach "$ROOT/tmp/progress-reports/replay.md" --file "$(sk_text report 'Retained report.')" >/dev/null
+REPORT="$(jq -r 'select(.attach) | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
+sk_poll "$ROOT"
+sk_poll "$ROOT"
+REPORT_TS="$(jq -r 'select(.t == "bound") | .ts' "$(sk_journal "$ROOT")")"
+ASK_ID="$(jq -r 'select(.kind == "ask") | .id' "$(sk_box "$ROOT")/to-overseer.jsonl")"
+for root in "$POST" "$ASK_TS" "$REPORT_TS" "$TOP"; do
+  case "$root" in "$POST") envelope="$NOTICE" ;; "$ASK_TS") envelope="$ASK_ID" ;; "$REPORT_TS") envelope="$REPORT" ;; "$TOP") envelope="" ;; esac
+  jq -c --arg ts "$root" 'if (.t == "out" and .thread == $ts) or (.t == "bound" and .ts == $ts) then del(.parent) else . end' "$(sk_journal "$ROOT")" > "$SK_TMP/legacy-journal"
+  mv -- "$SK_TMP/legacy-journal" "$(sk_journal "$ROOT")"
+  REPLAY="$(sk_inject "$CH" U001 'Retained context.' "$root")"
+  sk_event "$ROOT" "$CH" "$REPLAY"
+  assert_eq "$(jq -r --arg d "$CH:$REPLAY" 'select(.delivery_id == $d) | .parent.envelope // ""' "$(sk_box "$ROOT")/to-lane.jsonl")" "$envelope" \
+    "replay preserves only the envelope of a relay-posted root $root"
+done
+
 NONOWNER="$(sk_inject "$CH" U999 'Not mine.' "$PARENT")"
 sk_event "$ROOT" "$CH" "$NONOWNER"
 assert_eq "$(sk_state ".messages.${CH}[-1].text")" "Only the channel's owners steer this session; this message is not routed." "a non-owner reply receives NOT_OWNER"

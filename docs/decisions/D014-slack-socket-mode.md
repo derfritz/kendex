@@ -4,13 +4,13 @@
 
 **Date**: 2026-09-29
 
-**Status**: Active
+**Status**: Active (journal storage, live reply age → D017)
 
 **Research**: —
 
 **Applies to**: `skills/slack/`
 
-**Refines**: [D009](D009-slack-relay.md), whose items 2 and 4 this decision replaces; its item 1, build not adopt, and item 3, the mailbox is the ledger, stand.
+**Refines**: [D009](D009-slack-relay.md), whose items 2 and 4 this decision replaces; its build-not-adopt and mailbox authority stand. [D017](D017-slack-thread-context.md) replaces journal storage and live reply age only.
 
 ## Summary
 
@@ -50,7 +50,7 @@ D009 rejected Socket Mode because Slack sends each payload to one of an app's op
 ## Impact
 
 - A relay needs a second secret, `SLACK_APP_TOKEN`, and the Slack app needs Socket Mode on and the `message.groups` bot event; the package README names both.
-- A reply under a notice younger than `SLACK_THREAD_DAYS` arrives at once, not within ten polls; `listen --status` shows the connection state and no longer prints a call budget.
+- [D017](D017-slack-thread-context.md) owns live reply eligibility. `listen --status` shows connection state, not a call budget.
 - A second relay on one app takes part of the first relay's events. Those messages land only at the first relay's next reconnect.
 
 **Revisit When**: Slack retires Socket Mode or the `message.groups` event; one machine needs more relays than one app serves; or the catalog admits a dependency manager.

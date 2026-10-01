@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-27
 
-**Status**: Active (polling, one relay per person → D014)
+**Status**: Active (polling, one relay per person → D014; journal storage, live reply age → D017)
 
 **Research**: —
 
@@ -22,7 +22,7 @@ An overseer asks its owner questions, reports and takes directives through its m
 
 1. **Build, not adopt.** The relay is this package. No Slack SDK, bridge or bot framework is a dependency.
 2. **Polling, not Socket Mode.** Every `SLACK_POLL_SECONDS` the relay reads each bound channel's history since its journal position, the thread of every open question, and every tenth poll the other bound threads younger than `SLACK_THREAD_DAYS`.
-3. **The mailbox relay.** Slack is never the ledger. Pending questions live in the mailbox, reports on disk, and the relay's journal holds identifiers only. Inbound, every delivery carries `--delivery-id channel:ts`: the journal skips a stamp it already carried, and `lane-mail` judges under its lock any stamp the journal lost, the crash between the append and the mark. Outbound, the journal's `out` lines are the record, bounded by two horizons: an envelope older than `SLACK_THREAD_DAYS` is never posted, and a start with no journal posts nothing at or before the mailbox's newest envelope but its open asks.
+3. **The mailbox relay.** Slack is never the ledger. Pending questions live in the mailbox, reports on disk, and [D017](D017-slack-thread-context.md) owns journal storage. Inbound, every delivery carries `--delivery-id channel:ts`: the journal skips a stamp it already carried, and `lane-mail` judges under its lock any stamp the journal lost, the crash between the append and the mark. Outbound, the journal's `out` lines are the record, bounded by two horizons: an envelope older than `SLACK_THREAD_DAYS` is never posted, and a start with no journal posts nothing at or before the mailbox's newest envelope but its open asks.
 4. **One relay per person.** `slack listen --root A --root B` serves every bound checkout of one person from one process, with one token and one owners list from the process environment. Each checkout keeps its own binding, journal and lock.
 
 ## Rationale
@@ -47,10 +47,10 @@ An overseer asks its owner questions, reports and takes directives through its m
 ## Impact
 
 - The fleet sets `SLACK_POLL_SECONDS` per home so the sum of every relay's calls per minute stays inside Slack's allowance for `conversations.history` and `conversations.replies`; `slack listen --status` prints each relay's figure.
-- An owner's reply under a thread older than `SLACK_THREAD_DAYS` is not routed, and a reply under a younger notice waits up to ten polls; the package README states both.
+- [D017](D017-slack-thread-context.md) owns live reply eligibility; [D014](D014-slack-socket-mode.md) owns delivery timing.
 
 **Revisit When**: Slack's history or replies allowance no longer holds every relay of one app at the poll interval the owner accepts; a second consumer of Slack events appears that polling cannot serve; or the catalog admits a dependency manager.
 
-**Verification**: `skills/slack/tests/listen.test.sh`: the crash between the mailbox append and the journal mark delivers each note once, with a control whose delivery id is dropped; the second relay on one checkout is refused; the reply under a thread past `SLACK_THREAD_DAYS` is not routed.
+**Verification**: `skills/slack/tests/listen.test.sh`: the crash between the mailbox append and the journal mark delivers each note once, with a control whose delivery id is dropped; the second relay on one checkout is refused; reconnect thread reads retain their age bound.
 
 **References**: KEN-1845, KEN-1844, KEN-1846

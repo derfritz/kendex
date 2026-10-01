@@ -84,7 +84,7 @@ def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
             f"{root} channel={bound_before.channel} new={channel}"
             " fix=stop the relay and move tmp/slack/journal.jsonl aside, then run setup again",
         )
-    write_binding(root, Binding(channel, channel_name, f"{time.time():.6f}", list(settings.owners), ids))
+    write_binding(root, Binding(channel, channel_name, bound_before.bound_at if bound_before else f"{time.time():.6f}", list(settings.owners), ids))
     notice("bound", f"{channel} root={root} name={channel_name} owners={len(ids)}")
     restart_unit()
     return 0

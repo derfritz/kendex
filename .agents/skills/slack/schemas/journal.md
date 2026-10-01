@@ -16,7 +16,7 @@ What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bo
 |-------|-------|
 | `channel` | The Slack channel id the relay reads and posts to |
 | `channel_name` | The channel's name at binding time |
-| `bound_at` | The moment of the binding as a Slack stamp; a start whose journal holds no `start` line reads the channel from here |
+| `bound_at` | Channel/journal lifetime start; retained by repeat setup and owner changes. Only a journal reset starts a new time |
 | `owners` | The `SLACK_OWNERS` list the ids were resolved from |
 | `owner_ids` | Email address to Slack user id, one entry per owner |
 

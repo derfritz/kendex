@@ -594,16 +594,6 @@ for given in $OPTS_GIVEN; do
   esac
 done
 
-# Slack's relay produces both pointer fields together on threaded directives.
-if [ -n "$THREAD_TS$PARENT" ]; then
-  [ -n "$THREAD_TS" ] && [ -n "$PARENT" ] || refuse option-conflict '--thread-ts,--parent'
-  PARENT_JSON="$(jq -ce --arg ts "$THREAD_TS" '
-    select(type == "object" and .ts == $ts and (.author == "owner" or .author == "bot")
-      and (.excerpt | type == "string" and length <= 300)
-      and (if has("envelope") then (.envelope | type == "string") else true end))
-    ' -- "$PARENT" 2>/dev/null)" || refuse file-unreadable "$PARENT"
-fi
-
 # Judged before it reaches a path: a `/`, a NUL or a dotted name would
 # otherwise select a directory of the caller's choosing.
 case "$ITEM" in
@@ -617,6 +607,16 @@ esac
 for dependency in jq awk cat date mkdir mv tail tr; do
   command -v "$dependency" >/dev/null 2>&1 || refuse command-missing "$dependency"
 done
+
+# Slack's relay produces both pointer fields together on threaded directives.
+if [ -n "$THREAD_TS$PARENT" ]; then
+  [ -n "$THREAD_TS" ] && [ -n "$PARENT" ] || refuse option-conflict '--thread-ts,--parent'
+  PARENT_JSON="$(jq -ce --arg ts "$THREAD_TS" '
+    select(type == "object" and .ts == $ts and (.author == "owner" or .author == "bot")
+      and (.excerpt | type == "string" and length <= 300)
+      and (if has("envelope") then (.envelope | type == "string") else true end))
+    ' -- "$PARENT" 2>/dev/null)" || refuse file-unreadable "$PARENT"
+fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/file-lock.sh

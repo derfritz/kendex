@@ -63,9 +63,9 @@ def root_dir(root: Path) -> Path:
 
 @dataclass
 class Binding:
-    """The channel one checkout is bound to. `bound_at` is the moment of the
-    binding as a Slack stamp, the history position a start with no seeds
-    begins from."""
+    """The channel/journal lifetime. `bound_at` stays until its journal resets;
+    catch-up excludes older messages. Delivery positions advance separately.
+    """
 
     channel: str
     channel_name: str
