@@ -185,6 +185,65 @@ mail none 200 1
 parent retry 30 0
 ROWS
 
+# --- a live refusal and a secondary status error share the poll's containment ---
+# lane-mail refuses the send and makes status.json a directory in the same
+# call. The control narrows the shared catch so this filesystem error escapes.
+while read -r mode tries want; do
+  STATUS_ROOT="$(sk_new_root "live-status-$mode")"
+  STATUS_HEALTHY="$(sk_new_root "live-status-healthy-$mode")"
+  sk_bind "$STATUS_ROOT"
+  sk_bind "$STATUS_HEALTHY"
+  STATUS_CH="$(sk_channel "$STATUS_ROOT")"
+  STATUS_HC="$(sk_channel "$STATUS_HEALTHY")"
+  STATUS_PARENT="$(sk_inject "$STATUS_CH" U001 'Old status topic.' '' "\"ts\": \"$(python3 -c 'import time; print("%.6f" % (time.time() - 8 * 86400))')\"")"
+  rm -- "$STATUS_ROOT/.agents/skills/orch/scripts"
+  mkdir -p "$STATUS_ROOT/.agents/skills/orch/scripts"
+  cat > "$STATUS_ROOT/.agents/skills/orch/scripts/lane-mail" <<EOF
+#!/usr/bin/env bash
+if [ -e "$STATUS_ROOT/tmp/send-refused" ]; then
+  case " \$* " in *" send "*)
+    rm -- "$STATUS_ROOT/tmp/send-refused" "$STATUS_ROOT/tmp/slack/status.json" || exit 2
+    mkdir "$STATUS_ROOT/tmp/slack/status.json" || exit 2
+    echo 'lane-mail: send-refused' >&2; exit 2 ;;
+  esac
+fi
+exec "$SK_LANE_MAIL" "\$@"
+EOF
+  chmod +x "$STATUS_ROOT/.agents/skills/orch/scripts/lane-mail"
+  if [ "$mode" = control ]; then
+    sk_mutant secondary-status relay.py 'except Exception as status_err:' 'except RuntimeError as status_err:'
+  fi
+  relay "$STATUS_ROOT" --root "$STATUS_HEALTHY"
+  touch "$STATUS_ROOT/tmp/send-refused"
+  STATUS_REPLY="$(sk_inject "$STATUS_CH" U001 'Retry after status failure.' "$STATUS_PARENT")"
+  assert_eq "$(awaited python3 -c 'from pathlib import Path; import sys; p = Path(sys.argv[1]); print(p if p.is_dir() else "", end="")' "$STATUS_ROOT/tmp/slack/status.json")" \
+    "$STATUS_ROOT/tmp/slack/status.json" "$mode: the live send refusal also breaks its status write"
+  STATUS_NEXT="$(sk_inject "$STATUS_HC" U001 'Other root still receives.')"
+  STATUS_TEXT="$(landed "$STATUS_HEALTHY" "$STATUS_HC:$STATUS_NEXT" "$tries")"
+  if [ "$mode" = production ]; then
+    assert_has "$(sed -n '1p' "$SK_TMP/relay.err")" \
+      "slack: lane-mail-failed=lane-mail: send-refused root=$STATUS_ROOT status=IsADirectoryError:" \
+      "the primary live refusal retains its cause and names the secondary status error"
+  fi
+  rmdir "$STATUS_ROOT/tmp/slack/status.json"
+  STATUS_RETRIED="$(landed "$STATUS_ROOT" "$STATUS_CH:$STATUS_REPLY" "$tries")"
+  # Count exact delivery values, including the old reply's parent pointer.
+  if [ -f "$(sk_box "$STATUS_ROOT")/to-lane.jsonl" ]; then
+    STATUS_COUNTS="$(jq -s --arg d "$STATUS_CH:$STATUS_REPLY" --arg ts "$STATUS_PARENT" \
+      '[.[] | select(.delivery_id == $d and .text == "Retry after status failure." and .thread_ts == $ts and .parent == {ts:$ts,author:"owner",excerpt:"Old status topic."})] | length' "$(sk_box "$STATUS_ROOT")/to-lane.jsonl")" || exit 1
+  else
+    # No mailbox is created when the control stops before any delivery.
+    STATUS_COUNTS=0
+  fi
+  assert_eq "$STATUS_COUNTS|$STATUS_RETRIED|$STATUS_TEXT" \
+    "$want" "$mode: status failure containment keeps pending delivery and other-root progress; removing it fails the same instrument"
+  sk_relay_stop
+  sk_bin_reset
+done <<'ROWS'
+production 200 1|Retry after status failure.|Other root still receives.
+control 30 0||
+ROWS
+
 # --- two roots on one relay: each channel's event lands in its own mailbox ------------------
 # IOTA is bound, so the app is in its channel and Slack sends its events,
 # but the relay is not given it.

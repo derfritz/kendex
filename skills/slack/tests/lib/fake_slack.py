@@ -13,8 +13,8 @@ application/octet-stream when not; GET
 posted or edited naming its body's argument in `body_arg`; POST /_test/fault
 makes the next `times` calls of `method` answer `error`, HTTP `status`, or
 with `drop` close the connection after reading the request and before any
-response, or with `refuse` redirect to a port nothing listens on, which the
-client meets as a refused connection before its request is written, or with
+response, or with `refuse` redirect to a reserved port nothing listens on,
+which refuses or times out before the redirected request is written, or with
 `signin` Slack's sign-in page, or with `cut` a body the connection closes
 halfway through: `length` under its full Content-Length, `chunked` inside
 its first chunk, or with `chunked: true` the whole file in two chunks and

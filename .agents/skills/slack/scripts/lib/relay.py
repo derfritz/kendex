@@ -754,22 +754,27 @@ class Relay:
                 root.poll(self.bot_user)
                 root.record_status(True, "", self.connection, self.since, self.connection_error)
             except Exception as err:
-                if isinstance(err, Refusal) and err.key == "slack-auth-failed":
-                    raise
-                error = f"{err.key}={err.value}" if isinstance(err, Refusal) else f"{type(err).__name__}: {err}"
-                status_error = ""
-                try:
-                    root.record_status(False, error, self.connection, self.since, self.connection_error)
-                except Exception as status_err:
-                    # A broken root can also refuse its status write. Keep the
-                    # poll's single diagnostic and continue to the next root.
-                    status_error = f" status={type(status_err).__name__}: {status_err}"
-                failure = Refusal(err.key, f"{err.value} root={root.path}{status_error}") if isinstance(err, Refusal) else Refusal(
-                    "root-poll-failed", f"{root.path} cause={error}{status_error}"
-                )
-                print_refusal(failure)
+                self.root_failed(root, err)
                 clean = False
         return clean
+
+    def root_failed(self, root: RootRelay, err: Exception) -> None:
+        """Record one root's failure without letting its status write stop
+        other roots. A dead token still stops the shared relay."""
+        if isinstance(err, Refusal) and err.key == "slack-auth-failed":
+            raise err
+        error = f"{err.key}={err.value}" if isinstance(err, Refusal) else f"{type(err).__name__}: {err}"
+        status_error = ""
+        try:
+            root.record_status(False, error, self.connection, self.since, self.connection_error)
+        except Exception as status_err:
+            # A broken root can also refuse its status write. Keep the
+            # primary diagnostic and continue serving the other roots.
+            status_error = f" status={type(status_err).__name__}: {status_err}"
+        failure = Refusal(err.key, f"{err.value} root={root.path}{status_error}") if isinstance(err, Refusal) else Refusal(
+            "root-poll-failed", f"{root.path} cause={error}{status_error}"
+        )
+        print_refusal(failure)
 
     def run(self, once: bool) -> int:
         """`--once` is one poll of every root with no connection, its
@@ -902,8 +907,5 @@ class Relay:
         try:
             root.on_message(event, self.bot_user)
         except Refusal as err:
-            if err.key == "slack-auth-failed":
-                raise
-            print_refusal(err)
+            self.root_failed(root, err)
             root.caught_up = False
-            root.record_status(False, f"{err.key}={err.value}", self.connection, self.since, self.connection_error)

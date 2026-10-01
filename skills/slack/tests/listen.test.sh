@@ -370,9 +370,10 @@ ASK6="$(sed 's/^id=//' "$SK_TMP/ask6.out")"
 sk_ctl /_test/fault '{"method": "chat.postMessage", "refuse": true, "times": 1}' >/dev/null
 sk_poll "$GAMMA"
 assert_eq "$RC=${ERR1%% *}" "1=slack:" "a refused connection fails the poll"
-CONNECT_REFUSED="$(python3 -c 'import errno, os; print(ConnectionRefusedError(errno.ECONNREFUSED, os.strerror(errno.ECONNREFUSED)))')" || exit 1
-assert_eq "$ERR1" "slack: slack-unreachable=chat.postMessage ($CONNECT_REFUSED) id=$ASK6 root=$GAMMA" \
-  "the refusal is a refused connect, naming the envelope and root"
+# The reserved non-listening port can time out on macOS. The transport key,
+# envelope and root are the contract, not the operating system's error text.
+assert_eq "${ERR1%% (*}|${ERR1##*)}" "slack: slack-unreachable=chat.postMessage| id=$ASK6 root=$GAMMA" \
+  "the unsent request has the unreachable key, naming the envelope and root"
 assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$ASK6\") | .state" "$(sk_journal "$GAMMA")" | wc -l | tr -d ' ')" "0" \
   "a request Slack never received is not journaled"
 sk_poll "$GAMMA"
@@ -918,8 +919,8 @@ sk_lm "$NET" ask --item overseer --to owner --file "$(sk_text q10 'Never sent?')
 ASK10="$(sed 's/^id=//' "$SK_TMP/ask10.out")"
 sk_ctl /_test/fault '{"method": "chat.postMessage", "refuse": true, "times": 1}' >/dev/null
 sk_poll "$NET"
-assert_eq "$ERR1" "slack: slack-response-lost=chat.postMessage ($CONNECT_REFUSED)" \
-  "control: the network mutant received a refused connect"
+assert_eq "${ERR1%% (*}" "slack: slack-response-lost=chat.postMessage" \
+  "control: the network mutant classifies the unsent request as a lost response"
 assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$ASK10\") | .state" "$(sk_journal "$NET")")=$(asks "$(sk_channel "$NET")" 'Never sent?')" "0=unknown=0" \
   "control: a refused connection read as a lost response, the unsent ask is journaled unknown"
 sk_bin_reset
