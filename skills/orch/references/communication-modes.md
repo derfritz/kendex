@@ -132,12 +132,12 @@ This standard holds for the master and every overseer: each post the relay makes
 | Reply | Where the owner's message arrived | An answer to an owner message. A reply on Slack shows in the chat as at most one line naming the post. | No |
 
 - Nothing else goes to Slack: no acknowledgement, no mechanism, no history. The same routing holds for every overseer.
-- Threads: a reply goes in the thread of the owner message it answers, or of the thread that message sits in; later posts on the same topic stay in that thread until the owner moves to another topic. A new topic, a decision needed, a critical notice and the progress report start at the top level. One topic per post, so the owner can answer each in its own thread. Every thread reply is also sent to the channel (Slack's "Also send to channel"), so no reply is missed.
+- Threads: a reply goes in the thread of the owner message it answers, or of the thread that message sits in; later posts on the same topic stay in that thread until the owner moves to another topic. A new topic, a decision needed, a critical notice and the progress report start at the top level. One topic per post, so the owner can answer each in its own thread. Thread replies stay in their threads.
 - An owner message that arrives with a thread pointer is read with that thread only; the master reads the thread's history on demand, never the channel's.
 
 ### Thread rule
 
-- Answer a note typed in the pane in the pane only. Answer a mailbox note with `lane-mail notice --item overseer --to owner --ref [DIRECTIVE_ID] --file [PATH]`; the pane shows one line naming the reply. A directive carrying `thread_ts` takes this notice, which threads and broadcasts the reply. A `slack post` text reply takes `--thread TS --broadcast`.
+- Answer a note typed in the pane in the pane only. Answer a mailbox note with `lane-mail notice --item overseer --to owner --ref [DIRECTIVE_ID] --file [PATH]`; the pane shows one line naming the reply. A directive carrying `thread_ts` takes this notice, which keeps the reply in its thread. A `slack post` text reply takes `--thread TS`.
 - The directive's `parent` is small context, not the full conversation. Read more only when needed with `slack thread TS [--limit N]`; TS may name the root or a reply. Read no history by default.
 
 ### Words

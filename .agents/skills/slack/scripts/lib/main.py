@@ -20,7 +20,7 @@ Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
        slack listen --root ROOT [--root ROOT]... [--once]
        slack listen --status --root ROOT [--root ROOT]...
        slack post [--root ROOT] [--channel ID] --text TEXT [--mention]
-                  [--file PATH] [--thread TS [--broadcast]] [--update TS]
+                  [--file PATH] [--thread TS] [--update TS]
        slack compact [--root ROOT]...
        slack thread TS [--root ROOT] [--limit N]
        slack install --root ROOT [--root ROOT]... [--print]
@@ -64,8 +64,7 @@ post      one message to the bound channel, or --channel for another, its
           --mention prefixes every owner; --file uploads the file with the
           text as its comment instead, in Slack's mrkdwn and outside the
           12,000-character cap;
-          --thread replies in a thread; --broadcast also sends a text reply
-          to the channel; --update edits the message at that
+          --thread replies only in a thread; --update edits the message at that
           ts. Text and file bytes are refused when they match the
           secret-value pattern
 thread    print the requested thread as plain text, oldest first; TS names
@@ -136,7 +135,7 @@ def build() -> Parser:
     p.add_argument("--file")
     p.add_argument("--mention", action="store_true")
     p.add_argument("--thread")
-    p.add_argument("--broadcast", action="store_true")
+
     p.add_argument("--update")
     p = verbs.add_parser("compact", add_help=False)
     p.add_argument("--root", action="append")
@@ -173,10 +172,8 @@ def run(argv: List[str]) -> int:
             raise Refusal("usage", "post needs --text or --file")
         if args.update and args.file:
             raise Refusal("usage", "--update edits text and takes no --file")
-        if args.broadcast and (not args.thread or args.file or args.update):
-            raise Refusal("usage", "--broadcast needs a text --thread reply, not --file or --update")
         root = roots_of([args.root] if args.root else [])[0]
-        return verbs.post(root, args.channel, args.text, args.file, args.mention, args.thread, args.update, args.broadcast)
+        return verbs.post(root, args.channel, args.text, args.file, args.mention, args.thread, args.update)
     if args.verb == "compact":
         return verbs.compact_roots(roots_of(args.root or []))
     if args.verb == "thread":

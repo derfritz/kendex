@@ -75,7 +75,7 @@ assert_eq "$(jq -r --arg d "$CH:$LATE" 'select(.delivery_id == $d) | .parent.aut
 sk_run -- compact --root "$ROOT"
 sk_lm "$ROOT" notice --item overseer --to owner --ref "$OLD_ID" --file "$(sk_text old-answer 'Continuing.')" >/dev/null
 sk_poll "$ROOT"
-assert_eq "$(sk_state ".messages.${CH}[] | select(.text == \"Continuing.\") | [.thread_ts, .reply_broadcast] | @json")" "[\"$OLD\",true]" "after pruning, a ref notice reaches its live thread and broadcasts to the channel"
+assert_eq "$(sk_state ".messages.${CH}[] | select(.text == \"Continuing.\") | [.thread_ts, .reply_broadcast] | @json")" "[\"$OLD\",false]" "after pruning, a ref notice stays in its live thread"
 
 # Controls plant defects in copies of the runtime, never in the checkout.
 sk_mutant broadcast-route relay.py 'ROUTED_SUBTYPES = \{None, "file_share", "thread_broadcast"\}' 'ROUTED_SUBTYPES = {None, "file_share"}'
@@ -83,10 +83,10 @@ DROP="$(sk_inject "$CH" U001 'Broadcast dropped.' "$PARENT" '"subtype":"thread_b
 sk_event "$ROOT" "$CH" "$DROP"
 assert_eq "$(jq -s --arg d "$CH:$DROP" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl")" "0" "control: rejecting broadcast events breaks owner routing"
 sk_bin_reset
-sk_mutant broadcast-notice relay.py 'reply_broadcast=bool\(thread_ts\)' 'reply_broadcast=False'
-sk_lm "$ROOT" notice --item overseer --to owner --ref "$OLD_ID" --file "$(sk_text missed-broadcast 'Thread only.')" >/dev/null
+sk_mutant thread-only-notice relay.py 'thread_ts=thread_ts,\n                                     \*\*' 'thread_ts=thread_ts, reply_broadcast=True,\n                                     **'
+sk_lm "$ROOT" notice --item overseer --to owner --ref "$OLD_ID" --file "$(sk_text thread-only 'Thread only.')" >/dev/null
 sk_poll "$ROOT"
-assert_eq "$(sk_state ".messages.${CH}[] | select(.text == \"Thread only.\") | .reply_broadcast")" "false" "control: removing broadcast breaks ref notice visibility"
+assert_eq "$(sk_state ".messages.${CH}[] | select(.text == \"Thread only.\") | .reply_broadcast")" "true" "control: broadcasting a ref notice breaks the thread-only assertion"
 sk_bin_reset
 sk_mutant pointer relay.py 'parent = self.parent_context\(thread_ts\) if thread_ts != ts else None' 'parent = None'
 DROP="$(sk_inject "$CH" U001 'Lost context.' "$PARENT")"

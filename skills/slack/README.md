@@ -16,7 +16,7 @@ Requires Python 3.8+ and the orch skill, which the install adds.
 - Post an overseer's question to the channel with an @mention, and record the first reply in its thread as the answer.
 - Deliver any other owner message to the overseer as a directive, including a live reply in any thread at any age, with small parent context.
 - Read a requested thread as plain text with `slack thread`, without loading channel history.
-- Send a text reply to its thread and the channel with `slack post --thread TS --broadcast`. The relay broadcasts replies to referenced owner messages too.
+- Send a text reply only to its thread with `slack post --thread TS`.
 - Save the files an owner sends under `tmp/slack/files/` and name each saved path in the directive.
 - Mark each directive's message with :eyes: once it reaches the overseer's mailbox, and :white_check_mark: once the overseer reads it.
 - Post the overseer's notices and rulings, and upload its progress reports with the notice as the comment.

@@ -114,7 +114,7 @@ def post(
     mention_owners: bool,
     thread: Optional[str],
     update: Optional[str],
-    broadcast: bool,
+
 ) -> int:
     settings = load(need_owners=False)
     api = api_for(settings)
@@ -145,7 +145,7 @@ def post(
         api.post("chat.update", channel=channel, ts=update, markdown_text=body)
         notice("updated", f"{update} channel={channel}")
         return 0
-    answer = api.post("chat.postMessage", channel=channel, markdown_text=body, thread_ts=thread, reply_broadcast=broadcast)
+    answer = api.post("chat.postMessage", channel=channel, markdown_text=body, thread_ts=thread)
     notice("posted", f"{answer['ts']} channel={channel}")
     return 0
 

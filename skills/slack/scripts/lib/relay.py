@@ -601,7 +601,7 @@ class RootRelay:
                 return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
             body_arg = "markdown_text" if len(text) <= MARKDOWN_LIMIT else "text"
             return str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts,
-                                     reply_broadcast=bool(thread_ts), **{body_arg: text})["ts"])
+                                     **{body_arg: text})["ts"])
         except Refusal as err:
             self.post_refused(err, envelope, kind)
             return None
