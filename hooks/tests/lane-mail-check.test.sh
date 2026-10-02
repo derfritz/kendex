@@ -555,6 +555,48 @@ account_env() { # LANE-DIR-NAME
     "CLAUDE_CONFIG_DIR=$H/$1"
 }
 
+# Claude Code names the model in its usage line; the usage API scopes Fable
+# separately from the shared session and weekly windows.
+make_lane "$H" fableclaude 3600
+claude_usage 0 65 100 Fable > "$FIXTURE_DIR/.fableclaude.json"
+make_lane "$H" weekclaude 3600
+claude_usage 0 100 100 Fable > "$FIXTURE_DIR/.weekclaude.json"
+# MODEL|ACCOUNT|RC|FIRST LINE
+CLAUDE_ACCOUNT_ROWS='claude-opus-5-5|.fableclaude|0|-
+claude-fable-5-1|.fableclaude|2|lane-mail-check: headroom=0
+claude-opus-5-5|.weekclaude|2|lane-mail-check: headroom=0
+|.fableclaude|2|lane-mail-check: headroom=0'
+new_handoff_lane handoff_claude_model KEN-54
+while IFS='|' read -r model account status first; do
+  if [ -n "$model" ]; then
+    usage_line claude 1000 | jq -c --arg m "$model" '.message.model = $m' > "$TRANSCRIPT"
+  else
+    printf '%s\n' '{"type":"user","message":{"role":"user","content":"Start"}}' > "$TRANSCRIPT"
+  fi
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(account_env "$account")
+  expect "$status" "$first" "Claude model [$model] reads $account through its own windows"
+done <<< "$CLAUDE_ACCOUNT_ROWS"
+
+# Keep --model in the copy while removing its assignment. The Opus row then
+# fails: a full Fable window forces a handoff on a model with room.
+wake_mutant claude-model-unassigned \
+  '    PICK_MODEL=(--model "$(lane_context_mark_model claude "$MODEL")")' \
+  '    : # PICK_MODEL=(--model "$(lane_context_mark_model claude "$MODEL")")'
+new_handoff_lane control_claude_model KEN-54
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 1000
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .fableclaude)
+expect 2 "lane-mail-check: headroom=0" "control: the unassigned model reads the full Fable window"
+control_status=0
+(
+  FAIL=0
+  expect 0 - "Claude model [claude-opus-5-5] reads .fableclaude through its own windows"
+  [ "$FAIL" -eq 0 ]
+) > "$TMP_ROOT/claude-model.control.log" || control_status=$?
+assert_eq "$control_status" 1 "control: without the model assignment the Opus row turns red"
+
 new_handoff_lane handoff_headroom KEN-54
 write_transcript "$TRANSCRIPT" 1000
 # shellcheck disable=SC2046
