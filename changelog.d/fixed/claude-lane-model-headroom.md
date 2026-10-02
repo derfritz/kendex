@@ -1,1 +1,1 @@
-- Claude lanes use their own model's account limits at turn end. A full limit for another model no longer forces a handoff.
+- Claude lanes use model-specific account limits when a transcript usage reading names a model. Before that reading, account-wide limits can still force a handoff.
