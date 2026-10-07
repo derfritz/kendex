@@ -78,21 +78,28 @@ class DeviceTest(unittest.TestCase):
     workflow = template.decode()
 
     def test_device(self):
-        commands = [line.split()[2:4] for line in self.workflow.splitlines()
-                    if line.split()[:2] == ["xcrun", "simctl"]]
-        self.assertEqual(commands, [["bootstatus", '"$simulator"'], ["install", '"$simulator"'],
-                                    ["launch", '"$simulator"'], ["io", '"$simulator"']],
-                         "simctl device differs")
+        calls = [line.split()[2:4] for line in self.workflow.splitlines()
+                 if line.split()[:2] == ["xcrun", "simctl"]]
+        operations = {operation for operation, _ in calls}
+        for required in ("bootstatus", "install", "launch", "io"):
+            self.assertIn(required, operations, f"simctl {required} missing")
+        for operation, device in calls:
+            self.assertEqual(device, '"$simulator"', f"simctl {operation} device differs")
 
 
 result = runner.run(unittest.defaultTestLoader.loadTestsFromTestCase(DeviceTest))
 if not result.wasSuccessful():
     sys.exit(1)
+workflow = DeviceTest.workflow
 capture = 'xcrun simctl io "$simulator" screenshot'
-assertions.assertEqual(DeviceTest.workflow.count(capture), 1)
-DeviceTest.workflow = DeviceTest.workflow.replace(capture, "xcrun simctl io booted screenshot")
-result = runner.run(unittest.defaultTestLoader.loadTestsFromTestCase(DeviceTest))
-assertions.assertEqual(len(result.failures), 1)
-assertions.assertIn("simctl device differs", result.failures[0][1])
-print("must-fail control: capture device set to booted, assertion turned red: simctl device differs")
+for rule, new, failure_assertion in (
+    ("capture device", "xcrun simctl io booted screenshot", "simctl io device differs"),
+    ("capture presence", ": " + capture, "simctl io missing"),
+):
+    assertions.assertEqual(workflow.count(capture), 1)
+    DeviceTest.workflow = workflow.replace(capture, new)
+    result = runner.run(unittest.defaultTestLoader.loadTestsFromTestCase(DeviceTest))
+    assertions.assertEqual(len(result.failures), 1)
+    assertions.assertIn(failure_assertion, result.failures[0][1])
+    print(f"must-fail control: {rule} removed, assertion turned red: {failure_assertion}")
 PY
