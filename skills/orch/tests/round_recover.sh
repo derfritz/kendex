@@ -475,6 +475,47 @@ run --worktree "$WT" --issue KEN-96 --round-id 8-8 --transcript "$TMP_ROOT/lost.
 assert_eq "rc=$RC ${OUT%% artifact=*}" "rc=0 round-recover: recovered" \
   "a run whose child exited with no verdict is lost, not live, and recovery proceeds" "$TMP_ROOT/stderr"
 
+echo "=== an unconfirmed directive re-delegates whatever the round answered ==="
+# Each round would otherwise close another way: a valid report for the old
+# scope recovers, a live validation run is round-live, and the round that is
+# already the recovery round, with no report, is exhausted. The directive re-delegates all
+# three under a fresh id and spends no stall recovery.
+row=0
+for case in \
+  "an old-scope report^report^recovered" \
+  "a live validation run^live^round-live" \
+  "the recovery round^recovery^exhausted"; do
+  row=$((row + 1))
+  IFS='^' read -r label shape otherwise <<<"$case"
+  new_round "directive-$row" "KEN-7$row" 10-10 0
+  case "$shape" in
+    live) add_run "$WT" 2-live 5 - "$$" ;;
+    recovery) "$STATE" --state-dir "$WT/tmp" set "KEN-7$row" recovery_round_id 10-10 >/dev/null ;;
+  esac
+  report="$(implement_report "$HEAD_SHA" pass none)"
+  [[ "$shape" != recovery ]] || report=""
+  transcript "$TMP_ROOT/directive-$row.jsonl" claude-send 10-10 "$report"
+  run --worktree "$WT" --issue "KEN-7$row" --round-id 10-10 --transcript "$TMP_ROOT/directive-$row.jsonl"
+  closed="${OUT#round-recover: }"
+  assert_eq "${closed%% *} $(state_get "KEN-7$row" dev_round_id)" "$otherwise 10-10" \
+    "control: without the directive, $label closes as $otherwise" "$TMP_ROOT/stderr"
+  rm -f -- "${WT:?}/tmp/dev-return-KEN-7$row-10-10.json"
+  run --worktree "$WT" --issue "KEN-7$row" --round-id 10-10 --directive-unconfirmed
+  NEW="$(state_get "KEN-7$row" dev_round_id)"
+  assert_eq "rc=$RC $OUT" "rc=3 round-recover: redelegate round-id=$NEW from=10-10 reason=directive-unconfirmed" \
+    "directive: $label re-delegates under the id it minted" "$TMP_ROOT/stderr"
+  want_recovery=""
+  [[ "$shape" != recovery ]] || want_recovery=10-10
+  assert_eq "$([[ -n "$NEW" && "$NEW" != 10-10 ]] && echo fresh || echo "stale:$NEW") recovery=$(state_get "KEN-7$row" recovery_round_id) $([[ -e "$WT/tmp/dev-return-KEN-7$row-10-10.json" ]] && echo written || echo none)" \
+    "fresh recovery=$want_recovery none" "directive: $label spends no stall recovery and writes no artifact"
+done
+new_round directive-both KEN-79 10-10 0
+transcript "$TMP_ROOT/directive-both.jsonl" claude-send 10-10 ""
+run --worktree "$WT" --issue KEN-79 --round-id 10-10 --directive-unconfirmed --transcript "$TMP_ROOT/directive-both.jsonl"
+read -r refusal_prog refusal_key _ <"$TMP_ROOT/stderr" || true
+assert_eq "rc=$RC $refusal_prog $refusal_key $(state_get KEN-79 dev_round_id)" \
+  "rc=2 round-recover: conflicting-options 10-10" "a directive with a transcript refuses and mints nothing" "$TMP_ROOT/stderr"
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
