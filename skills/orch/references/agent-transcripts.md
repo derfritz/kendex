@@ -10,3 +10,5 @@ Where each harness records a delegated agent's turns, for `round-recover --trans
 | Copilot CLI | Pending: a session records its events in `${COPILOT_HOME:-~/.copilot}/session-state/<session-id>/events.jsonl`, and where a task-tool subagent's turns land is not yet measured. Copilot CLI 1.0.88 fires agentStop at a custom subagent's end as well, carrying the subagent's own `sessionId` and the parent's `transcriptPath`, so that stop names no transcript of the subagent's own | Pending |
 
 A harness that keeps no transcript for the agent: run `round-recover` without `--transcript`. The round then has no report.
+
+A harness that keeps no transcript, or whose row is pending, confirms no directive: a directive during a round on it is unconfirmed and takes `round-recover --directive-unconfirmed` ([skill-rules.md § Directive During A Round](skill-rules.md#directive-during-a-round)), never the stall recovery above.
