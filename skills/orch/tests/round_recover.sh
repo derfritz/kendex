@@ -476,10 +476,28 @@ assert_eq "rc=$RC ${OUT%% artifact=*}" "rc=0 round-recover: recovered" \
   "a run whose child exited with no verdict is lost, not live, and recovery proceeds" "$TMP_ROOT/stderr"
 
 echo "=== an unconfirmed directive re-delegates whatever the round answered ==="
+# A setsid validation run of WORKTREE still going: a detached process that
+# leads its own group under the child argv dev-validate-run records, which
+# --stop ends. Sets LIVE_PID.
+live_run() { # WORKTREE
+  local dir="$1/tmp/dev-validate-2-live"
+  setsid bash -c 'sleep 300; :' validate --child --run-dir "$dir" &
+  LIVE_PID=$!
+  add_run "$1" 2-live 5 - "$LIVE_PID"
+  printf 'runner=setsid\n' > "$dir/runner"
+}
+# Whether PID still runs; a zombie the test shell has not reaped has ended.
+proc_state() { # PID
+  case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
+    "" | Z*) echo gone ;;
+    *) echo alive ;;
+  esac
+}
 # Each round would otherwise close another way: a valid report for the old
 # scope recovers, a live validation run is round-live, and the round that is
-# already the recovery round, with no report, is exhausted. The directive re-delegates all
-# three under a fresh id and spends no stall recovery.
+# already the recovery round, with no report, is exhausted. The directive
+# re-delegates all three under a fresh id, spends no stall recovery, and ends
+# the live run first.
 row=0
 for case in \
   "an old-scope report^report^recovered" \
@@ -489,7 +507,7 @@ for case in \
   IFS='^' read -r label shape otherwise <<<"$case"
   new_round "directive-$row" "KEN-7$row" 10-10 0
   case "$shape" in
-    live) add_run "$WT" 2-live 5 - "$$" ;;
+    live) live_run "$WT" ;;
     recovery) "$STATE" --state-dir "$WT/tmp" set "KEN-7$row" recovery_round_id 10-10 >/dev/null ;;
   esac
   report="$(implement_report "$HEAD_SHA" pass none)"
@@ -508,11 +526,24 @@ for case in \
   [[ "$shape" != recovery ]] || want_recovery=10-10
   assert_eq "$([[ -n "$NEW" && "$NEW" != 10-10 ]] && echo fresh || echo "stale:$NEW") recovery=$(state_get "KEN-7$row" recovery_round_id) $([[ -e "$WT/tmp/dev-return-KEN-7$row-10-10.json" ]] && echo written || echo none)" \
     "fresh recovery=$want_recovery none" "directive: $label spends no stall recovery and writes no artifact"
+  if [[ "$shape" == live ]]; then
+    assert_eq "$(proc_state "$LIVE_PID")" "gone" "directive: the live validation run is stopped before the new round" "$TMP_ROOT/stderr"
+    kill -KILL -- "-$LIVE_PID" 2>/dev/null || true
+    wait "$LIVE_PID" 2>/dev/null || true
+  fi
 done
+# A run --stop cannot end refuses the re-delegation: no fresh round starts
+# beside a run that would refuse its validation.
+new_round directive-stuck KEN-78 10-10 0
+add_run "$WT" 2-stuck 5 - "$DEAD_PID"
+printf 'runner=unknown\n' > "$WT/tmp/dev-validate-2-stuck/runner"
+run --worktree "$WT" --issue KEN-78 --round-id 10-10 --directive-unconfirmed
+assert_eq "rc=$RC $(grep -m1 '^round-recover: ' "$TMP_ROOT/stderr" | cut -d' ' -f1-2) $(state_get KEN-78 dev_round_id)" \
+  "rc=2 round-recover: stop-failed 10-10" "a directive whose run cannot be stopped refuses and mints nothing" "$TMP_ROOT/stderr"
 new_round directive-both KEN-79 10-10 0
 transcript "$TMP_ROOT/directive-both.jsonl" claude-send 10-10 ""
 run --worktree "$WT" --issue KEN-79 --round-id 10-10 --directive-unconfirmed --transcript "$TMP_ROOT/directive-both.jsonl"
-read -r refusal_prog refusal_key _ <"$TMP_ROOT/stderr" || true
+read -r refusal_prog refusal_key _ < <(grep -m1 '^round-recover: ' "$TMP_ROOT/stderr") || true
 assert_eq "rc=$RC $refusal_prog $refusal_key $(state_get KEN-79 dev_round_id)" \
   "rc=2 round-recover: conflicting-options 10-10" "a directive with a transcript refuses and mints nothing" "$TMP_ROOT/stderr"
 

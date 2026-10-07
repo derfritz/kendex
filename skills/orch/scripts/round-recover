@@ -73,10 +73,13 @@
 #
 # --directive-unconfirmed re-delegates a round whose agent never confirmed a
 # scope directive sent while it ran, whatever it reported or is still running:
-# a report or a live run answers the old scope. It reads no transcript and no
-# run, mints the fresh round id, prints redelegate with reason
-# directive-unconfirmed, and leaves recovery_round_id as it is, since the round
-# it names did not stall and keeps its one stall recovery.
+# a report or a live run answers the old scope. It reads no transcript, ends
+# the worktree's validation runs with dev-validate-run --stop, since a run left
+# going refuses the next round's start as run-live and holds the build output
+# round-prune would reclaim, then mints the fresh round id, prints redelegate
+# with reason directive-unconfirmed, and leaves recovery_round_id as it is,
+# since the round it names did not stall and keeps its one stall recovery. A
+# stop that fails mints nothing.
 #
 # --state-dir DIR is the workflow-state directory the round's state is read
 # from and the fresh round id is minted in, passed to workflow-state as its own
@@ -103,6 +106,7 @@ die() {
       invalid-id) printf 'The ID must be safe for a file path.\n' ;;
       not-directory) printf 'The worktree path is not a directory.\n' ;;
       conflicting-options) printf 'An unconfirmed directive re-delegates without reading a transcript; pass one of --directive-unconfirmed and --transcript.\n' ;;
+      stop-failed) printf 'dev-validate-run --stop could not end a validation run in the worktree; its own line is above.\n' ;;
       transcript-unreadable) printf 'The transcript is not a readable file; omit --transcript only when the harness kept none.\n' ;;
       transcript-read) printf 'jq could not read the transcript.\n' ;;
       git-failed) printf 'git could not read the worktree.\n' ;;
@@ -160,6 +164,7 @@ state=("$SCRIPT_DIR/workflow-state")
 [[ -z "$state_dir" ]] || state+=(--state-dir "$state_dir")
 if [[ "$directive" == true ]]; then
   [[ "$transcript_given" == false ]] || die conflicting-options option=--transcript
+  "$SCRIPT_DIR/dev-validate-run" --stop --worktree "$worktree" >&2 || die stop-failed "worktree=$worktree"
   if ! new="$("${state[@]}" new-round-id "$issue" dev_round_id)"; then
     die state-failed "issue=$issue"
   fi
