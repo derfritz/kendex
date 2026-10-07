@@ -478,11 +478,16 @@ assert_eq "rc=$RC ${OUT%% artifact=*}" "rc=0 round-recover: recovered" \
 echo "=== an unconfirmed directive re-delegates whatever the round answered ==="
 # A setsid validation run of WORKTREE still going: a detached process that
 # leads its own group under the child argv dev-validate-run records, which
-# --stop ends. Sets LIVE_PID.
+# --stop ends. Sets LIVE_PID. The child writes its ready marker from the Bash
+# setsid execs, so the group exists before the run is recorded; a child not yet
+# leading it would be left alone by --stop as a stale pid.
 live_run() { # WORKTREE
-  local dir="$1/tmp/dev-validate-2-live"
-  setsid bash -c 'sleep 300; :' validate --child --run-dir "$dir" &
+  local dir="$1/tmp/dev-validate-2-live" ready="$TMP_ROOT/live-ready-${1##*/}" n=0
+  READY="$ready" setsid bash -c 'printf "%s\n" "$$" > "$READY"; sleep 300; :' validate --child --run-dir "$dir" &
   LIVE_PID=$!
+  while [[ ! -s "$ready" ]] && (( n < 100 )); do sleep 0.1; n=$((n + 1)); done
+  [[ "$(cat "$ready" 2>/dev/null)" == "$LIVE_PID" ]] \
+    || { printf 'live_run: child %s never acknowledged its session\n' "$LIVE_PID" >&2; exit 1; }
   add_run "$1" 2-live 5 - "$LIVE_PID"
   printf 'runner=setsid\n' > "$dir/runner"
 }
