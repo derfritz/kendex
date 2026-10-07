@@ -59,6 +59,10 @@ The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev
 | `exhausted` | The re-delegated round stalled too, with no report or a report the disk contradicts; the printed `reason` names which. Stop and report it. |
 | `round-live` | Not a stall. Arm one new watchdog. |
 
+#### Directive During A Round
+
+A lane never steers a running dev or fix round by message alone: a message to a running agent can arrive late or never, so a send is not delivery. A directive that changes the round's scope goes first into the round's durable brief, the item comment or `tmp/` file the delegation names. The lane then reads the agent's transcript ([agent-transcripts.md](agent-transcripts.md)) for the change. The change read there is "delivered"; anything else is "unconfirmed". Still unconfirmed at the next watchdog return: shut that agent down, run `round-recover` as for a stalled round, and take its `redelegate` row, which keeps the uncommitted tree and delegates the updated brief under a fresh round id. The lane's notice to the overseer says "confirmed in the dev agent's transcript at [TIME]" or "unconfirmed, re-delegating", never "reached" on a send.
+
 ---
 
 ## Coordination
