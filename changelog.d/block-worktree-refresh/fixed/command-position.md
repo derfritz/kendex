@@ -1,1 +1,1 @@
-- PR titles, commit messages, issue titles and heredoc data in modeled commands no longer trigger the worktree guard. Unsupported forms retain the whole-text check without taking help, scope, preview or target exemptions from raw text. Earlier data or read words cannot hide a later project write.
+- Modeled commit messages and titles remain data beside unsupported commands. Raw scans keep kendex and its writing verb in the same command and retain later real writes. Unsupported writes prove no argument exemptions and report the unsupported form with a remedy that removes it.

@@ -1,1 +1,1 @@
-- The shared command reader identifies executables in modeled simple commands. It models git commit messages and GitHub PR and issue creation fields as data. Other git and gh invocations, unsupported programs, prefix options, descriptor redirections and heredocs with later commands retain whole-text judgement.
+- The shared command reader reports the model and unsupported cause for each simple command. A neighboring unsupported command preserves modeled data arguments. Raw command boundaries prevent separate reads and staging commands from becoming a kendex write.

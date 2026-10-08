@@ -4,7 +4,7 @@
 # by what it spells: block-worktree-refresh. Pure Bash, no external command,
 # and sourcing it defines functions and constants only.
 #
-# `command_segments TEXT` leaves SEGMENTS holding one segment per line. A
+# `command_segments TEXT` reports each simple command in aligned arrays. A
 # segment is the text between two of `;`, `&`, `|`, `(`, `)`, `` ` `` and a
 # line end, with a backslash-newline continuing it, and without the comment a
 # `#` beginning a word starts. What the shell would not run as a command is
@@ -15,9 +15,10 @@
 # shell, `eval`, `source` or `.` word runs is kept as the command text it is,
 # and a command substitution is kept wherever it stands. A quote or a
 # substitution that cannot be paired makes the command unmodeled.
-# COMMAND_MODEL is modeled only when every segment fits the reader below.
-# An unmodeled command leaves its whole text unmasked for the caller's old
-# whole-text judgement. Unknown programs may launch their arguments.
+# SEGMENT_TEXTS, SEGMENT_COMMANDS, SEGMENT_MODELS and SEGMENT_CAUSES hold answers for
+# each simple command. A modeled command keeps its argument contract even
+# when a neighboring command is unmodeled. Unsupported commands keep raw
+# text within their own boundaries. Unknown programs may launch arguments.
 #
 # `command_text SEGMENT` leaves COMMAND_TEXTS holding the segment from its
 # executable word, after control words, assignments and launching prefixes.
@@ -25,7 +26,7 @@
 # result leaves the segment whole for the caller's text check.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
-# and COMMAND_TEXTS, so a caller does not use those names for its own state.
+# UNMASKED and COMMAND_TEXTS, so a caller does not use those names for its own state.
 
 NL=$'\n'
 MASK=$'\001'
@@ -89,7 +90,7 @@ runs_shell_text() { # TEXT [stdin] -> 0 when its executable runs shell text
       -*c*)
         # Options after -c can precede its command operand. This reader only
         # models a command operand immediately after that option.
-        [ -z "${rest//[[:space:]]/}" ] || COMMAND_MODEL=unmodeled
+        [ -z "${rest//[[:space:]]/}" ] || { COMMAND_MODEL=unmodeled; COMMAND_CAUSE=shell-options; }
         [ -z "${rest//[[:space:]]/}" ]; return ;;
       [-+]*[oO]) operand=1 ;;
       [-+]*) ;;
@@ -213,9 +214,9 @@ SPAN_MASK='[[:space:]<&;|()`]'
 # quote that still does not pair is a span the reader could not read, and the
 # caller is told.
 mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
-  local rest=$1 head quote span before out=""
+  local rest=$1 head quote span before out="" original=""
   while :; do
-    upto_unescaped "$rest" "'\"" || { MASKED=$out$rest; return 0; }
+    upto_unescaped "$rest" "'\"" || { MASKED=$out$rest; UNMASKED=$original$rest; return 0; }
     head=$UPTO
     rest=${rest#"$head"}
     quote=${rest:0:1}
@@ -233,18 +234,27 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
     fi
     rest=${rest#"$span$quote"}
     out=$out$head
+    original=$original$head
     before=${out##*$SEP}
-    if [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
+    if [ "${2:-}" = boundaries ] || [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
       # A single-quoted span expands nothing, so all of it is masked; a
       # double-quoted one has its substitutions lifted out first.
       if [ "$quote" = "'" ]; then
         out=$out$quote${span//$SPAN_MASK/$MASK}$quote
+        original=$original$quote$span$quote
       else
-        lift_substitutions "$span" || return 1
+        if [ "${2:-}" = boundaries ]; then
+          OUTSIDE=$span
+          SUBS=""
+        else
+          lift_substitutions "$span" || return 1
+        fi
+        original=$original$quote$OUTSIDE$quote$SUBS
         out=$out$quote${OUTSIDE//$SPAN_MASK/$MASK}$quote$SUBS
       fi
     else
       out=$out$NL$span$NL
+      original=$original$NL$span$NL
     fi
   done
 }
@@ -255,10 +265,13 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
 # not arm one. A body is dropped only once its terminator line is found: an
 # unterminated body is text the reader could not read, and dropping it would
 # take the rest of the command with it. Each segment then loses its comment.
-command_segments() { # TEXT -> SEGMENTS, one segment per line
-  local joined=${1//\\$NL/ } line index count delim expands end term judged="" cut
+command_segments() { # TEXT -> aligned SEGMENT_TEXTS, SEGMENT_MODELS, SEGMENT_CAUSES
+  local joined=${1//\\$NL/ } line index count delim expands end term judged="" cause
   local lines
-  COMMAND_MODEL=modeled
+  SEGMENT_COMMANDS=()
+  SEGMENT_TEXTS=()
+  SEGMENT_MODELS=()
+  SEGMENT_CAUSES=()
   lines=()
   while IFS= read -r line; do
     lines[${#lines[@]}]=$line
@@ -269,22 +282,21 @@ EOF
   count=${#lines[@]}
   while [ "$index" -lt "$count" ]; do
     line=${lines[$index]}
-    judged=$judged$line$NL
     index=$((index + 1))
+    COMMAND_MODEL=modeled
+    COMMAND_CAUSE=""
     uncommented "$line"
     if mask_spans "$BARE"; then
       BARE=$MASKED
     fi
-    # Descriptor duplication is not a command separator. Cutting its &
-    # would lose the following executable, so the complete text falls back.
-    case "$BARE" in *[\<\>]\&*) COMMAND_MODEL=unmodeled ;; esac
-    [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]] || continue
+    if ! [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]]; then
+      judged=$judged$line$NL
+      continue
+    fi
     delim=${BASH_REMATCH[2]}
-    # A later command can consume this body through a pipe or a command
-    # list. Only a heredoc on one simple command is modeled.
-    case "$BARE" in *$SEP*) COMMAND_MODEL=unmodeled ;; esac
-    # `<<'EOF'` and `<<"EOF"` name the same delimiter as `<<EOF`, but a quoted
-    # delimiter stops the shell expanding the body, so nothing in that body runs.
+    command_text "$BARE"
+    cause=$COMMAND_CAUSE
+    case "$BARE" in *$SEP*) cause=heredoc-command-list ;; esac
     expands=1
     case "$delim" in
       \'*\' | \"*\") delim=${delim:1:${#delim} - 2}; expands="" ;;
@@ -295,44 +307,66 @@ EOF
       [ "${term#"${term%%[![:space:]]*}"}" = "$delim" ] && break
       end=$((end + 1))
     done
-    [ "$end" -lt "$count" ] || { COMMAND_MODEL=unmodeled; continue; }
-    if runs_shell_text "$BARE" stdin; then
+    if [ "$end" -eq "$count" ]; then
+      cut_segments "$judged"
+      judged=""
+      cut_segments "$line" unterminated-heredoc
+      continue
+    fi
+    # A heredoc shared by a command list has no proven consumer. The header
+    # still keeps each command's data contract; only its input stays raw.
+    if [ -n "$cause" ]; then
+      cut_segments "$judged$line"
+      judged=""
+      term=""
       while [ "$index" -lt "$end" ]; do
-        judged=$judged${lines[$index]}$NL
+        term=$term${lines[$index]}$NL
         index=$((index + 1))
       done
-    elif [ -n "$expands" ]; then
-      # The body itself is data, but the shell expands it before the command
-      # reads it, so a command substitution inside it runs. A line holding one
-      # the reader cannot close is kept whole rather than dropped.
-      while [ "$index" -lt "$end" ]; do
-        if lift_substitutions "${lines[$index]}"; then
-          judged=$judged$SUBS
-        else
-          COMMAND_MODEL=unmodeled
+      cut_segments "$term" "$cause"
+    else
+      judged=$judged$line$NL
+      COMMAND_MODEL=modeled
+      COMMAND_CAUSE=""
+      if runs_shell_text "$BARE" stdin; then
+        while [ "$index" -lt "$end" ]; do
           judged=$judged${lines[$index]}$NL
-        fi
-        index=$((index + 1))
-      done
+          index=$((index + 1))
+        done
+      elif [ -n "$expands" ]; then
+        while [ "$index" -lt "$end" ]; do
+          if lift_substitutions "${lines[$index]}"; then
+            judged=$judged$SUBS
+          else
+            cut_segments "$judged"
+            judged=""
+            cut_segments "${lines[$index]}" unpaired-substitution
+          fi
+          index=$((index + 1))
+        done
+      fi
     fi
     index=$((end + 1))
   done
-  # A quote the reader could not pair leaves the original text to be cut
-  # whole, the reach a caller's patterns had before any span was read.
-  if mask_spans "$judged"; then
-    cut=$MASKED
-  else
-    COMMAND_MODEL=unmodeled
-    cut=$joined
-  fi
-  cut_segments "$cut"
-  # One fallback covers every form the reader cannot model completely.
-  if [ "$COMMAND_MODEL" = unmodeled ]; then
-    cut_segments "$joined" fallback
-  fi
+  cut_segments "$judged"
 }
-cut_segments() { # TEXT [fallback] -> SEGMENTS
-  local cut=$1 line out=""
+cut_segments() { # TEXT [UNMODELED-CAUSE] -> append command answers
+  local text=$1 cause=${2:-} cut original line raw masked model detail length executable
+  if [ -n "$cause" ]; then
+    cut=$text
+    original=$text
+  elif mask_spans "$text" boundaries; then
+    cut=$MASKED
+    original=$UNMASKED
+    # Descriptor duplication's ampersand belongs to this command. Keep it
+    # until the command's model has been decided, rather than cutting it.
+    cut=${cut//>\&/>$MASK}
+    cut=${cut//<\&/<$MASK}
+  else
+    cause=unpaired-text
+    cut=$text
+    original=$text
+  fi
   cut=${cut//;/$NL}
   cut=${cut//&/$NL}
   cut=${cut//\|/$NL}
@@ -340,17 +374,53 @@ cut_segments() { # TEXT [fallback] -> SEGMENTS
   cut=${cut//\)/$NL}
   cut=${cut//\`/$NL}
   while IFS= read -r line; do
-    if [ "${2:-}" = fallback ]; then
-      BARE=$line
+    length=${#line}
+    raw=${original:0:length}
+    original=${original:length+1}
+    [ -n "${raw//[[:space:]]/}" ] || continue
+    if [ -n "$cause" ]; then
+      model=unmodeled
+      detail=$cause
     else
+      COMMAND_MODEL=modeled
+      COMMAND_CAUSE=""
       uncommented "$line"
-      command_text "$BARE"
+      raw=${raw:0:${#BARE}}
+      mask_spans "$raw" boundaries || return 1
+      masked=$MASKED
+      command_text "$masked"
+      executable=$COMMAND_TEXTS
+      case "$raw" in
+        *[\<\>]\&*) COMMAND_MODEL=unmodeled; COMMAND_CAUSE=descriptor-redirection ;;
+      esac
+      if [ "$COMMAND_MODEL" = modeled ]; then
+        if mask_spans "$raw"; then
+          # Opening shell input or substitutions produces command text. Feed
+          # that text back through this same boundary and model owner.
+          if [ "$COMMAND_MODEL" = modeled ] && [ "$MASKED" != "$masked" ]; then
+            cut_segments "$UNMASKED"
+            continue
+          fi
+        else
+          COMMAND_MODEL=unmodeled
+          COMMAND_CAUSE=unpaired-text
+        fi
+      fi
+      if [ "$COMMAND_MODEL" = unmodeled ]; then
+        cut_segments "$raw" "$COMMAND_CAUSE"
+        continue
+      fi
+      model=modeled
+      detail=""
+      raw=$MASKED
     fi
-    out=$out$BARE$NL
+    SEGMENT_COMMANDS[${#SEGMENT_COMMANDS[@]}]=${executable:-}
+    SEGMENT_TEXTS[${#SEGMENT_TEXTS[@]}]=$raw
+    SEGMENT_MODELS[${#SEGMENT_MODELS[@]}]=$model
+    SEGMENT_CAUSES[${#SEGMENT_CAUSES[@]}]=$detail
   done <<EOF
 $cut
 EOF
-  SEGMENTS=$out
 }
 # The executable of a simple command. Assignments and redirections are the
 # shell's, and launching prefixes consume their own options before the child
@@ -361,10 +431,6 @@ EOF
 command_text() { # SEGMENT -> COMMAND_TEXTS
   local rest=$1 word raw name data launcher="" operand="" options=1
   COMMAND_TEXTS=""
-  if [ "${COMMAND_MODEL:-modeled}" = unmodeled ]; then
-    COMMAND_TEXTS=$1
-    return 0
-  fi
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
     [ -n "$rest" ] || return 0
@@ -383,7 +449,7 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
         command:-p | env:-i | env:--ignore-environment | sudo:-E | exec:-c | exec:-l | exec:-cl | time:-p) ;;
         env:--unset | env:--chdir | env:-u | env:-C | env:-iC | sudo:--user | sudo:--group | sudo:--host | sudo:--prompt | sudo:--chdir | sudo:--chroot | sudo:--role | sudo:--type | sudo:--other-user | sudo:--close-from | sudo:-u | sudo:-g | sudo:-h | sudo:-p | sudo:-D | sudo:-ED | sudo:-R | sudo:-r | sudo:-t | sudo:-U | sudo:-C | timeout:--signal | timeout:--kill-after | timeout:-s | timeout:-k | exec:-a | exec:-cla) operand=1 ;;
         env:--unset=* | env:--chdir=*) ;;
-        *) COMMAND_MODEL=unmodeled; COMMAND_TEXTS=$1; return 0 ;;
+        *) COMMAND_MODEL=unmodeled; COMMAND_CAUSE=prefix-options; COMMAND_TEXTS=$1; return 0 ;;
       esac
     elif [ "$launcher" = timeout ]; then
       # timeout's duration precedes the child command.
@@ -408,11 +474,16 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
           options=1
           ;;
         eval)
-          case "${rest#"$raw"}" in *[[:space:]]--*) COMMAND_MODEL=unmodeled ;; esac
+          case "${rest#"$raw"}" in *[[:space:]]--*) COMMAND_MODEL=unmodeled; COMMAND_CAUSE=eval-options ;; esac
           if [ "${2:-}" = shell ]; then
             COMMAND_TEXTS=$rest
             return 0
           fi
+          data=${rest#"$raw"}
+          data=${data#"${data%%[![:space:]]*}"}
+          case "$data" in
+            [\'\"]*) COMMAND_TEXTS=$rest; return 0 ;;
+          esac
           launcher=""
           options=1
           ;;
@@ -432,6 +503,7 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
             COMMAND_TEXTS=$rest
           else
             COMMAND_MODEL=unmodeled
+            COMMAND_CAUSE=argument-contract
             COMMAND_TEXTS=$1
           fi
           return 0
@@ -447,6 +519,7 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
           ;;
         *)
           COMMAND_MODEL=unmodeled
+          COMMAND_CAUSE=unknown-command
           COMMAND_TEXTS=$1
           return 0
           ;;
