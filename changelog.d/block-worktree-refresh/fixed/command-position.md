@@ -1,1 +1,1 @@
-- PR titles, commit messages, issue titles and heredoc data that name kendex refresh no longer trigger the worktree guard. Real kendex project writes still use the scope and target checks.
+- PR titles, commit messages, issue titles and heredoc data in modeled commands no longer trigger the worktree guard. Unsupported command forms retain the whole-text check, so unknown launchers and shell syntax cannot hide a project write.

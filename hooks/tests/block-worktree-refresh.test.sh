@@ -439,7 +439,7 @@ the quoted argument of -c is command text and is judged|2|block-worktree-refresh
 the quoted argument of eval is command text too|2|block-worktree-refresh: refused=apply|eval "kendex apply"
 a sudo before the verb does not hide it|2|block-worktree-refresh: refused=refresh|sudo kendex refresh
 an unquoted eval before the verb does not hide it either|2|block-worktree-refresh: refused=refresh|eval kendex refresh
-nor does a wrapper word the hook was never told about|2|block-worktree-refresh: refused=refresh|timeout 60 kendex refresh
+a modeled timeout prefix preserves the child command|2|block-worktree-refresh: refused=refresh|timeout 60 kendex refresh
 a here-string fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<< "kendex refresh"
 a heredoc body fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<EOF\nkendex refresh\nEOF
 a shell in stdin mode takes positional arguments without hiding its commands|2|block-worktree-refresh: refused=refresh|bash -s -- ARG \0074\0074'EOF'\nkendex refresh\nEOF
@@ -451,7 +451,7 @@ stdin mode behind launch and control words retains the command body|2|block-work
 a shell script filename keeps the heredoc as data|0|-|bash -- script.sh \0074\0074'EOF'\nkendex refresh\nEOF
 disabling stdin mode restores a script filename|0|-|bash -s +s script.sh \0074\0074'EOF'\nkendex refresh\nEOF
 stdin positional arguments do not become quoted command text|0|-|bash -s -- 'kendex refresh' \0074\0074'EOF'\n:\nEOF
-command mode executes its argument instead of the heredoc|0|-|bash -sc ':' -- ARG \0074\0074'EOF'\nkendex refresh\nEOF
+unmodeled: command mode executes its argument instead of the heredoc|2|block-worktree-refresh: refused=refresh|bash -sc ':' -- ARG \0074\0074'EOF'\nkendex refresh\nEOF
 command mode still judges its real command when stdin mode is also set|2|block-worktree-refresh: refused=refresh|bash -sc 'kendex refresh' -- ARG
 a write in an if condition is judged|2|block-worktree-refresh: refused=refresh|if kendex refresh; then :; fi
 a write after then is judged|2|block-worktree-refresh: refused=refresh|if true; then kendex refresh; fi
@@ -471,9 +471,9 @@ exec's process name operand is not its child|2|block-worktree-refresh: refused=r
 exec's clustered process name option retains its child|2|block-worktree-refresh: refused=refresh|exec -cla NAME kendex refresh
 exec options and an option terminator preserve its child|2|block-worktree-refresh: refused=refresh|exec -cl -- kendex refresh
 exec's process name can name kendex without running it|0|-|exec -a kendex printf '%s' refresh
-a quoted control word remains an executable name|0|-|"if" kendex refresh
-a quoted control word keeps shell-looking arguments as data|0|-|"if" bash -c 'kendex refresh'
-a path that ends in a control word remains an executable name|0|-|/bin/while kendex refresh
+unmodeled: a quoted control word remains an executable name|2|block-worktree-refresh: refused=refresh|"if" kendex refresh
+unmodeled: a quoted control word keeps shell-looking arguments as data|2|block-worktree-refresh: refused=refresh|"if" bash -c 'kendex refresh'
+unmodeled: a path that ends in a control word remains an executable name|2|block-worktree-refresh: refused=refresh|/bin/while kendex refresh
 a control word as an argument does not introduce a command|0|-|printf '%s' then kendex refresh
 global scope still passes after control words|0|-|if kendex refresh --global; then :; fi
 a redirection target is a file, not the interpreter of one|0|-|cat > script.sh <<EOF\nkendex refresh\nEOF
@@ -532,6 +532,34 @@ an expansion before --project-path= may be --, so no target is named|2|block-wor
 --scope project before --scope=global keeps it|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project --scope=global
 ROWS
 command_table
+
+# Shell tool calls use launchers, redirections and command lists outside the
+# simple-command model. Each row retains a real write and expects refusal.
+IFS= read -r -d '' FALLBACK_ROWS <<'ROWS' || :
+a shell option terminator after -c falls back|2|block-worktree-refresh: refused=refresh|bash -c -- 'kendex refresh'
+a shell flag after -c falls back|2|block-worktree-refresh: refused=refresh|bash -c -e 'kendex refresh'
+a shell option operand after -c falls back|2|block-worktree-refresh: refused=refresh|bash -c -o errexit 'kendex refresh'
+eval with an option terminator falls back|2|block-worktree-refresh: refused=refresh|eval -- kendex refresh
+an output descriptor duplication falls back|2|block-worktree-refresh: refused=refresh|2>&1 kendex refresh
+an input descriptor duplication falls back|2|block-worktree-refresh: refused=refresh|2\0074&0 kendex refresh
+a descriptor close falls back|2|block-worktree-refresh: refused=refresh|2>&- kendex refresh
+a heredoc piped to a shell falls back|2|block-worktree-refresh: refused=refresh|cat \0074\0074'EOF' | bash\nkendex refresh\nEOF
+a heredoc read by a shell after a directory move falls back|2|block-worktree-refresh: moved=refresh|cd . && bash \0074\0074'EOF'\nkendex refresh\nEOF
+a heredoc read by a later stdin shell falls back|2|block-worktree-refresh: refused=refresh|true; bash -s \0074\0074EOF\nkendex refresh\nEOF
+nohup outside the launcher model falls back|2|block-worktree-refresh: refused=refresh|nohup kendex refresh
+nice outside the launcher model falls back|2|block-worktree-refresh: refused=refresh|nice -n 5 kendex refresh
+xargs outside the launcher model falls back|2|block-worktree-refresh: refused=refresh|printf '' | xargs kendex refresh
+stdbuf outside the launcher model falls back|2|block-worktree-refresh: refused=refresh|stdbuf -oL kendex refresh
+an escaped executable word falls back|2|block-worktree-refresh: refused=refresh|\0134kendex refresh
+a function declaration outside the model falls back|2|block-worktree-refresh: refused=refresh|function f { kendex refresh; }; f
+an unknown launcher running quoted shell text falls back|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh'
+a sudo long option with an attached value falls back|2|block-worktree-refresh: refused=refresh|sudo --user=root kendex refresh
+an unmodeled sudo environment option falls back|2|block-worktree-refresh: refused=refresh|sudo --preserve-env=GIT_DIR kendex refresh
+ROWS
+MODELED_ROWS=$COMMAND_ROWS
+COMMAND_ROWS=$FALLBACK_ROWS
+command_table
+COMMAND_ROWS=$MODELED_ROWS
 
 # label|cwd source|world|status|first line|command
 # Read by `read` rather than a command substitution: Bash 3.2 pairs the
@@ -881,23 +909,15 @@ control() { # DEFECT -> rerun command_table against a disposable install
       ;;
     keyword)
       awk '
-        /elif.*raw.*word.*launcher.*until/ { print "    elif false; then"; count++; next }
+        /elif.*raw.*word.*launcher.*until/ { print; print "      COMMAND_TEXTS=\"\"; return 0"; count++; next }
         { print }
         END { if (count != 1) exit 2 }
       ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
       COMMAND_ROWS='a conditional write is judged|2|block-worktree-refresh: refused=refresh|if kendex refresh; then :; fi'
       ;;
-    quoted-keyword)
-      awk '
-        /local bare=\$1 word/ { print; print "  bare=${bare//\\\"/}"; count++; next }
-        { print }
-        END { if (count != 1) exit 2 }
-      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
-      COMMAND_ROWS="a quoted control word keeps shell arguments as data|0|-|\"if\" bash -c 'kendex refresh'"
-      ;;
     time)
       awk '
-        /elif.*raw.*time.*launcher/ { print "    elif false; then"; count++; next }
+        /elif.*raw.*time.*launcher/ { print; print "      COMMAND_TEXTS=\"\"; return 0"; count++; next }
         { print }
         END { if (count != 1) exit 2 }
       ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
@@ -905,11 +925,21 @@ control() { # DEFECT -> rerun command_table against a disposable install
       ;;
     exec)
       awk '
-        /env \| command \| sudo \| timeout \| exec\)/ { sub(/ \| exec/, ""); count++ }
+        /env \| command \| sudo \| timeout \| exec\)/ { print; print "          COMMAND_TEXTS=\"\"; return 0"; count++; next }
         { print }
         END { if (count != 1) exit 2 }
       ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
       COMMAND_ROWS='an exec write is judged|2|block-worktree-refresh: refused=refresh|exec -a NAME kendex refresh'
+      ;;
+    fallback)
+      awk '
+        /\[\[ \$COMMAND_TEXTS =~ \$KENDEX_RE \]\] \|\| return 0/ {
+          print "    return 0"; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$HOOK" >"$at/hooks/block-worktree-refresh.sh"
+      COMMAND_ROWS=$FALLBACK_ROWS
       ;;
     *) printf 'control: unknown defect=%s\n' "$defect" >&2; exit 2 ;;
   esac
@@ -918,6 +948,10 @@ control() { # DEFECT -> rerun command_table against a disposable install
   FAIL=0
   command_table >"$at/result" || status=$?
   [ "$FAIL" -ne 0 ] || status=1
+  if [ "$defect" = fallback ]; then
+    # Every fallback form must depend on the fallback refusal rule.
+    [ "$PASS" -eq 0 ] || status=1
+  fi
   HOOK=$original_hook
   COMMAND_ROWS=$original_rows
   PASS=$saved_pass
@@ -929,9 +963,9 @@ control executable
 control shell
 control stdin
 control keyword
-control quoted-keyword
 control time
 control exec
+control fallback
 
 echo
 echo "block-worktree-refresh: $PASS passed, $FAIL failed"

@@ -14,12 +14,15 @@
 # body its command reads as data is dropped. A span or a body that a
 # shell, `eval`, `source` or `.` word runs is kept as the command text it is,
 # and a command substitution is kept wherever it stands. A quote or a
-# substitution that cannot be paired leaves the whole text to be cut unmasked,
-# so a command the reader could not take apart is read with its full reach.
+# substitution that cannot be paired makes the command unmodeled.
+# COMMAND_MODEL is modeled only when every segment fits the reader below.
+# An unmodeled command leaves its whole text unmasked for the caller's old
+# whole-text judgement. Unknown programs may launch their arguments.
 #
 # `command_text SEGMENT` leaves COMMAND_TEXTS holding the segment from its
-# executable word, after control words, assignments and launching prefixes. Arguments of
-# another executable do not become commands.
+# executable word, after control words, assignments and launching prefixes.
+# Arguments of modeled data commands do not become commands. An unmodeled
+# result leaves the segment whole for the caller's text check.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
 # and COMMAND_TEXTS, so a caller does not use those names for its own state.
@@ -83,7 +86,11 @@ runs_shell_text() { # TEXT [stdin] -> 0 when its executable runs shell text
       -- | -) options="" ;;
       --rcfile | --init-file) operand=1 ;;
       --*) ;;
-      -*c*) [ -z "${rest//[[:space:]]/}" ]; return ;;
+      -*c*)
+        # Options after -c can precede its command operand. This reader only
+        # models a command operand immediately after that option.
+        [ -z "${rest//[[:space:]]/}" ] || COMMAND_MODEL=unmodeled
+        [ -z "${rest//[[:space:]]/}" ]; return ;;
       [-+]*[oO]) operand=1 ;;
       [-+]*) ;;
       *) [ -n "$stdin" ] && [ "$mode" = stdin ]; return ;;
@@ -249,8 +256,9 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
 # unterminated body is text the reader could not read, and dropping it would
 # take the rest of the command with it. Each segment then loses its comment.
 command_segments() { # TEXT -> SEGMENTS, one segment per line
-  local joined=${1//\\$NL/ } line index count delim expands end term judged="" cut out=""
+  local joined=${1//\\$NL/ } line index count delim expands end term judged="" cut
   local lines
+  COMMAND_MODEL=modeled
   lines=()
   while IFS= read -r line; do
     lines[${#lines[@]}]=$line
@@ -267,8 +275,14 @@ EOF
     if mask_spans "$BARE"; then
       BARE=$MASKED
     fi
+    # Descriptor duplication is not a command separator. Cutting its &
+    # would lose the following executable, so the complete text falls back.
+    case "$BARE" in *[\<\>]\&*) COMMAND_MODEL=unmodeled ;; esac
     [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]] || continue
     delim=${BASH_REMATCH[2]}
+    # A later command can consume this body through a pipe or a command
+    # list. Only a heredoc on one simple command is modeled.
+    case "$BARE" in *$SEP*) COMMAND_MODEL=unmodeled ;; esac
     # `<<'EOF'` and `<<"EOF"` name the same delimiter as `<<EOF`, but a quoted
     # delimiter stops the shell expanding the body, so nothing in that body runs.
     expands=1
@@ -281,7 +295,7 @@ EOF
       [ "${term#"${term%%[![:space:]]*}"}" = "$delim" ] && break
       end=$((end + 1))
     done
-    [ "$end" -lt "$count" ] || continue
+    [ "$end" -lt "$count" ] || { COMMAND_MODEL=unmodeled; continue; }
     if runs_shell_text "$BARE" stdin; then
       while [ "$index" -lt "$end" ]; do
         judged=$judged${lines[$index]}$NL
@@ -295,6 +309,7 @@ EOF
         if lift_substitutions "${lines[$index]}"; then
           judged=$judged$SUBS
         else
+          COMMAND_MODEL=unmodeled
           judged=$judged${lines[$index]}$NL
         fi
         index=$((index + 1))
@@ -307,8 +322,17 @@ EOF
   if mask_spans "$judged"; then
     cut=$MASKED
   else
+    COMMAND_MODEL=unmodeled
     cut=$joined
   fi
+  cut_segments "$cut"
+  # One fallback covers every form the reader cannot model completely.
+  if [ "$COMMAND_MODEL" = unmodeled ]; then
+    cut_segments "$joined" fallback
+  fi
+}
+cut_segments() { # TEXT [fallback] -> SEGMENTS
+  local cut=$1 line out=""
   cut=${cut//;/$NL}
   cut=${cut//&/$NL}
   cut=${cut//\|/$NL}
@@ -316,7 +340,12 @@ EOF
   cut=${cut//\)/$NL}
   cut=${cut//\`/$NL}
   while IFS= read -r line; do
-    uncommented "$line"
+    if [ "${2:-}" = fallback ]; then
+      BARE=$line
+    else
+      uncommented "$line"
+      command_text "$BARE"
+    fi
     out=$out$BARE$NL
   done <<EOF
 $cut
@@ -332,6 +361,10 @@ EOF
 command_text() { # SEGMENT -> COMMAND_TEXTS
   local rest=$1 word raw name launcher="" operand="" options=1
   COMMAND_TEXTS=""
+  if [ "${COMMAND_MODEL:-modeled}" = unmodeled ]; then
+    COMMAND_TEXTS=$1
+    return 0
+  fi
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
     [ -n "$rest" ] || return 0
@@ -346,8 +379,11 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
       options=""
     elif [ -n "$launcher" ] && [ -n "$options" ] && [[ $word == -* ]]; then
       case "$launcher:$word" in
-        command:-*[vV]*) return 0 ;;
-        env:--unset | env:--chdir | env:-*[uC] | sudo:--user | sudo:--group | sudo:--host | sudo:--prompt | sudo:--chdir | sudo:--chroot | sudo:--role | sudo:--type | sudo:--other-user | sudo:--close-from | sudo:-*[ughpDRrtUC] | timeout:--signal | timeout:--kill-after | timeout:-[sk] | exec:-*a) operand=1 ;;
+        command:-v | command:-V) return 0 ;;
+        command:-p | env:-i | env:--ignore-environment | sudo:-E | exec:-c | exec:-l | exec:-cl | time:-p) ;;
+        env:--unset | env:--chdir | env:-u | env:-C | env:-iC | sudo:--user | sudo:--group | sudo:--host | sudo:--prompt | sudo:--chdir | sudo:--chroot | sudo:--role | sudo:--type | sudo:--other-user | sudo:--close-from | sudo:-u | sudo:-g | sudo:-h | sudo:-p | sudo:-D | sudo:-ED | sudo:-R | sudo:-r | sudo:-t | sudo:-U | sudo:-C | timeout:--signal | timeout:--kill-after | timeout:-s | timeout:-k | exec:-a | exec:-cla) operand=1 ;;
+        env:--unset=* | env:--chdir=*) ;;
+        *) COMMAND_MODEL=unmodeled; COMMAND_TEXTS=$1; return 0 ;;
       esac
     elif [ "$launcher" = timeout ]; then
       # timeout's duration precedes the child command.
@@ -372,6 +408,7 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
           options=1
           ;;
         eval)
+          case "${rest#"$raw"}" in *[[:space:]]--*) COMMAND_MODEL=unmodeled ;; esac
           if [ "${2:-}" = shell ]; then
             COMMAND_TEXTS=$rest
             return 0
@@ -379,8 +416,22 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
           launcher=""
           options=1
           ;;
-        *)
+        kendex | sh | bash | dash | ash | zsh | ksh | fish | source | .)
           COMMAND_TEXTS=$rest
+          return 0
+          ;;
+        # These tool commands consume their arguments as data. The catalog
+        # GitHub and Linear CLIs and dev return writer have the same contract.
+        git | gh | echo | printf | cat | true | false | : | github.sh | linear.sh | dev-return-write)
+          COMMAND_TEXTS=$rest
+          return 0
+          ;;
+        'fi' | 'done' | 'esac' | \})
+          return 0
+          ;;
+        *)
+          COMMAND_MODEL=unmodeled
+          COMMAND_TEXTS=$1
           return 0
           ;;
       esac
