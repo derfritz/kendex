@@ -3,9 +3,9 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Report an early advisory for a plain project-writing kendex command from a linked git worktree. The parsed CLI checks the actual caller and writing destinations before any write. Quoted text, heredocs, wrappers and other shell forms are outside this advisory. Global, read and preview commands pass silently.
-# summary: Reports plain kendex project writes in linked worktrees. The CLI refuses a write that targets another checkout.
-# safety: Reads the hook payload and git checkout paths. Writes no files and refuses only an unreadable payload. A missing git or a failed git check produces an unavailable advisory. The CLI owns project-write refusal for every shell form.
+# description: Report an early advisory for a plain project-writing kendex command from a linked git worktree. The parsed CLI checks the actual caller and writing destinations for commands covered by its worktree guard before any write. Quoted text, heredocs, wrappers and other shell forms are outside this advisory. Global, read and preview commands pass silently.
+# summary: Reports plain kendex project writes in linked worktrees. The CLI refuses cross-checkout writes for its guarded commands.
+# safety: Reads the hook payload and git checkout paths. Writes no files. Refuses missing payload tools, unreadable or invalid payloads, invalid working-directory values and failed context output. A missing git or a failed git check produces an unavailable advisory. The CLI checks guarded commands regardless of their shell form.
 # timeout: 10
 # ---
 

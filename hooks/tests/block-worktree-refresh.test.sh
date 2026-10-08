@@ -27,6 +27,11 @@ git -C "$MAIN" worktree add -qb lane "$WT"
 assert_eq() {
   if [ "$1" = "$2" ]; then PASS=$((PASS + 1)); printf 'ok %s\n' "$3"
   else FAIL=$((FAIL + 1)); printf 'FAIL %s: expected [%s], got [%s]\n' "$3" "$2" "$1"; fi
+  # A silent tool call must add no session context through stdout.
+  if [ "$2" = 'rc=0 first=-' ]; then
+    if [ ! -s "$OUT_FILE" ]; then PASS=$((PASS + 1)); printf 'ok %s stdout\n' "$3"
+    else FAIL=$((FAIL + 1)); printf 'FAIL %s: stdout is not empty\n' "$3"; fi
+  fi
 }
 run_payload() {
   rc=0
@@ -91,7 +96,7 @@ for defect in title executable advisory; do
   mutant="$TMP_ROOT/$defect.sh"
   case "$defect" in
     title)
-      awk '/^PLAIN=/ { print "[[ $COMMAND != *--title* ]] || notice advisory refresh"; n++ } {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      awk '/^PLAIN=/ { print "[[ $COMMAND != *--title* ]] || notice advisory refresh 2>/dev/null"; n++ } {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       rows=$VG_ROW ;;
     executable)
       awk '/^  EXECUTABLE=/ {sub(/\^/, ""); n++} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"

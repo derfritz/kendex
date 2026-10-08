@@ -2,7 +2,7 @@
 //! the command rather than walked up to from the working directory.
 //!
 //! These run the real binary with parsed project targets and then read
-//! the destination. Linked callers may write only their own checkout.
+//! the destination. Linked callers need --lane-refresh to write another checkout.
 #![cfg(unix)]
 
 use crate::test_util;

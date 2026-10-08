@@ -1,1 +1,1 @@
-- Quoted titles, commit messages, and heredoc data no longer trigger worktree warnings. The hook gives an early advisory for plain kendex commands. The CLI checks actual project-writing destinations before any write.
+- Quoted titles, commit messages, and heredoc data no longer trigger worktree warnings. The hook gives an early advisory for plain kendex commands. The CLI checks the actual destinations of commands covered by its worktree guard before any write.
