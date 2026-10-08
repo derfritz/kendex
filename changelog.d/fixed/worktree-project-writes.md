@@ -1,0 +1,1 @@
+- Project customization writes from a linked worktree now stop before any write when they target another checkout. Global scope and writes inside the caller's own checkout remain available. For refresh, apply, and applying updates, `--lane-refresh` explicitly permits a cross-checkout write.

@@ -14,22 +14,16 @@
 # body its command reads as data is dropped. A span or a body that a
 # shell, `eval`, `source` or `.` word runs is kept as the command text it is,
 # and a command substitution is kept wherever it stands. A quote or a
-# substitution that cannot be paired makes the command unmodeled.
-# Optional command-local results are advertised by COMMAND_SEGMENTS_API.
-# SEGMENT_TEXTS, SEGMENT_COMMANDS, SEGMENT_MODELS and SEGMENT_CAUSES hold answers for
-# each simple command. A modeled command keeps its argument contract even
-# when a neighboring command is unmodeled. Unsupported commands keep raw
-# text within their own boundaries. Unknown programs may launch arguments.
+# substitution that cannot be paired leaves the whole text to be cut unmasked,
+# so a command the reader could not take apart is read with its full reach.
 #
-# `command_text SEGMENT` keeps the published executable-candidate contract:
-# COMMAND_TEXTS holds each remaining word and its suffix, one per line, after
-# assignments. The command-local reader uses command_position to select the
-# executable and report whether the argument contract is modeled.
+# `command_text SEGMENT` leaves COMMAND_TEXTS holding, one per line, that
+# segment from each word the shell may execute, for a caller judging what a
+# command is rather than what it mentions.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
-# UNMASKED and COMMAND_TEXTS, so a caller does not use those names for its own state.
+# and COMMAND_TEXTS, so a caller does not use those names for its own state.
 
-COMMAND_SEGMENTS_API=command-local-v1
 NL=$'\n'
 MASK=$'\001'
 # A `#` begins a comment wherever it begins a word, which is the start of the
@@ -47,80 +41,27 @@ uncommented() { # LINE -> BARE, the line without its comment
     *) BARE=$1 ;;
   esac
 }
-# GitHub and Linear script arguments are data even when the script name
-# ends in `sh`. Only an interpreter in executable position runs shell text.
-SHELL_RE='^(sh|bash|dash|ash|zsh|ksh|fish)$'
+# The one test of whether text the shell reads out of a quoted span or out of a
+# heredoc body is a command: a word before it in the same segment runs shell
+# text. That is a word whose basename ends in `sh` (`sh`, `bash`, `zsh`,
+# `dash`, `ksh`), or the word `eval`, `source` or `.`. It also reads an English
+# word ending in `sh`, such as `push`, as one; that keeps the span as command
+# text rather than masking it, which is the direction a guard fails in.
+SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:space:]]|$)'
 # A word standing immediately after a redirection operator is a file the shell
 # opens, never the command it runs, so `cat > script.sh` names no shell. The
 # operator takes an optional file descriptor digit in front of it.
 REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
-# Keep quotes until executable selection: a quoted control word is a command
-# name. Strip them from the selected name so `"/bin/bash"` still names a shell.
-# Redirection targets never name an interpreter.
-runs_shell_text() { # TEXT [stdin|published] -> 0 when its executable runs shell text
-  local bare=$1 word raw rest projection=${2:-span} mode=${2:-span} operand="" options=1 stdin=""
-  case "$bare" in *\<\<\<*) mode=stdin ;; esac
+# The quotes come off the text first: a command word may be quoted whole, as in
+# `"/bin/bash" -c ...`, and a quoted word ends in the quote character, so the
+# basename would never read as a shell. The redirection targets go next, since
+# a target named for a script would otherwise read as the interpreter of one.
+runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
+  local bare=${1//[\'\"]/}
   while [[ $bare =~ $REDIRECT_RE ]]; do
     bare=${bare/"${BASH_REMATCH[0]}"/ }
   done
-  if [ "$projection" = published ]; then
-    # Published scalar consumers have no unsupported-command result. Retain
-    # their conservative shell-input projection through candidate suffixes,
-    # independently of the carrier that selects current shell operands.
-    command_text "$bare"
-    while IFS= read -r rest; do
-      word=${rest%%[[:space:]]*}
-      word=${word//[\'\"]/}
-      case "${word##*/}" in *sh | eval | source | .) return 0 ;; esac
-    done <<EOF
-$COMMAND_TEXTS
-EOF
-    return 1
-  fi
-  command_position "$bare" shell
-  word=${COMMAND_TEXTS%%[[:space:]]*}
-  rest=${COMMAND_TEXTS#"$word"}
-  word=${word//[\'\"]/}
-  word=${word##*/}
-  case "$word" in eval | source | .) return 0 ;; esac
-  [[ $word =~ $SHELL_RE ]] || return 1
-  while :; do
-    rest=${rest#"${rest%%[![:space:]]*}"}
-    [ -n "$rest" ] || { [ "$mode" = stdin ]; return; }
-    raw=${rest%%[[:space:]]*}
-    rest=${rest#"$raw"}
-    raw=${raw//[\'\"]/}
-    if [ -n "$operand" ]; then
-      operand=""
-      continue
-    fi
-    case "$raw" in
-      --*) ;;
-      -*s*) stdin=1 ;;
-      +*s*) stdin="" ;;
-    esac
-    case "$raw" in
-      -- | -) options="" ;;
-      --rcfile | --init-file) operand=1 ;;
-      --*) ;;
-      -*c*)
-        # Options after -c can precede its command operand. This reader only
-        # models a command operand immediately after that option.
-        [ -z "${rest//[[:space:]]/}" ] || { COMMAND_MODEL=unmodeled; COMMAND_CAUSE=shell-options; }
-        [ -z "${rest//[[:space:]]/}" ]; return ;;
-      [-+]*[oO]) operand=1 ;;
-      [-+]*) ;;
-      *) [ -n "$stdin" ] && [ "$mode" = stdin ]; return ;;
-    esac
-    if [ -z "$options" ]; then
-      if [ -n "$stdin" ]; then
-        [ "$mode" = stdin ]
-      else
-        [ "$mode" = stdin ] && [ -z "${rest//[[:space:]]/}" ]
-      fi
-      return
-    fi
-  done
+  [[ $bare =~ $SHELL_RE ]]
 }
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc
 # delimiter, a word the shell does not run. `<<<` is a here-string, and the
@@ -217,8 +158,9 @@ SEP='[&;|()`'$NL']'
 # it arms no heredoc; and the separators, so a `(` or a `;` written in it
 # neither opens a command position for the next span nor cuts the segment.
 SPAN_MASK='[[:space:]<&;|()`]'
-# Quotes preserve data arguments as one word. Only text supplied to a shell
-# interpreter, eval, source or dot opens a command position.
+# The one judge of what the shell would not run, masking only that and leaving
+# a caller's patterns their whole-text reach over everything else, so there is
+# no list of words that may precede a command to be incomplete.
 #
 # Each quoted span keeps its quotes, since a command word may be quoted whole
 # (`"/path/kendex" refresh`), while the characters SPAN_MASK names inside it
@@ -230,9 +172,9 @@ SPAN_MASK='[[:space:]<&;|()`]'
 # quote that still does not pair is a span the reader could not read, and the
 # caller is told.
 mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
-  local rest=$1 head quote span before out="" original=""
+  local rest=$1 head quote span before out=""
   while :; do
-    upto_unescaped "$rest" "'\"" || { MASKED=$out$rest; UNMASKED=$original$rest; return 0; }
+    upto_unescaped "$rest" "'\"" || { MASKED=$out$rest; return 0; }
     head=$UPTO
     rest=${rest#"$head"}
     quote=${rest:0:1}
@@ -250,27 +192,18 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
     fi
     rest=${rest#"$span$quote"}
     out=$out$head
-    original=$original$head
     before=${out##*$SEP}
-    if [ "${2:-}" = boundaries ] || [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before" "${2:-span}"; then
+    if [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
       # A single-quoted span expands nothing, so all of it is masked; a
       # double-quoted one has its substitutions lifted out first.
       if [ "$quote" = "'" ]; then
         out=$out$quote${span//$SPAN_MASK/$MASK}$quote
-        original=$original$quote$span$quote
       else
-        if [ "${2:-}" = boundaries ]; then
-          OUTSIDE=$span
-          SUBS=""
-        else
-          lift_substitutions "$span" || return 1
-        fi
-        original=$original$quote$OUTSIDE$quote$SUBS
+        lift_substitutions "$span" || return 1
         out=$out$quote${OUTSIDE//$SPAN_MASK/$MASK}$quote$SUBS
       fi
     else
       out=$out$NL$span$NL
-      original=$original$NL$span$NL
     fi
   done
 }
@@ -281,14 +214,9 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
 # not arm one. A body is dropped only once its terminator line is found: an
 # unterminated body is text the reader could not read, and dropping it would
 # take the rest of the command with it. Each segment then loses its comment.
-command_segments() { # TEXT -> aligned SEGMENT_TEXTS, SEGMENT_MODELS, SEGMENT_CAUSES
-  local joined=${1//\\$NL/ } line index count delim expands end term judged="" cause
+command_segments() { # TEXT -> SEGMENTS, one segment per line
+  local joined=${1//\\$NL/ } line index count delim expands end term judged="" cut out=""
   local lines
-  SEGMENTS=""
-  SEGMENT_COMMANDS=()
-  SEGMENT_TEXTS=()
-  SEGMENT_MODELS=()
-  SEGMENT_CAUSES=()
   lines=()
   while IFS= read -r line; do
     lines[${#lines[@]}]=$line
@@ -299,21 +227,16 @@ EOF
   count=${#lines[@]}
   while [ "$index" -lt "$count" ]; do
     line=${lines[$index]}
+    judged=$judged$line$NL
     index=$((index + 1))
-    COMMAND_MODEL=modeled
-    COMMAND_CAUSE=""
     uncommented "$line"
     if mask_spans "$BARE"; then
       BARE=$MASKED
     fi
-    if ! [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]]; then
-      judged=$judged$line$NL
-      continue
-    fi
+    [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]] || continue
     delim=${BASH_REMATCH[2]}
-    command_position "$BARE"
-    cause=$COMMAND_CAUSE
-    case "$BARE" in *$SEP*) cause=heredoc-command-list ;; esac
+    # `<<'EOF'` and `<<"EOF"` name the same delimiter as `<<EOF`, but a quoted
+    # delimiter stops the shell expanding the body, so nothing in that body runs.
     expands=1
     case "$delim" in
       \'*\' | \"*\") delim=${delim:1:${#delim} - 2}; expands="" ;;
@@ -324,82 +247,34 @@ EOF
       [ "${term#"${term%%[![:space:]]*}"}" = "$delim" ] && break
       end=$((end + 1))
     done
-    if [ "$end" -eq "$count" ]; then
-      cut_segments "$judged"
-      judged=""
-      cut_segments "$line" unterminated-heredoc
-      continue
-    fi
-    # A heredoc shared by a command list has no proven consumer. The header
-    # still keeps each command's data contract; only its input stays raw.
-    if [ -n "$cause" ]; then
-      cut_segments "$judged$line"
-      judged=""
-      term=""
+    [ "$end" -lt "$count" ] || continue
+    if runs_shell_text "$BARE"; then
       while [ "$index" -lt "$end" ]; do
-        term=$term${lines[$index]}$NL
+        judged=$judged${lines[$index]}$NL
         index=$((index + 1))
       done
-      cut_segments "$term" "$cause"
-    else
-      judged=$judged$line$NL
-      COMMAND_MODEL=modeled
-      COMMAND_CAUSE=""
-      if runs_shell_text "$BARE" stdin; then
-        while [ "$index" -lt "$end" ]; do
+    elif [ -n "$expands" ]; then
+      # The body itself is data, but the shell expands it before the command
+      # reads it, so a command substitution inside it runs. A line holding one
+      # the reader cannot close is kept whole rather than dropped.
+      while [ "$index" -lt "$end" ]; do
+        if lift_substitutions "${lines[$index]}"; then
+          judged=$judged$SUBS
+        else
           judged=$judged${lines[$index]}$NL
-          index=$((index + 1))
-        done
-      elif [ -n "$expands" ]; then
-        while [ "$index" -lt "$end" ]; do
-          if lift_substitutions "${lines[$index]}"; then
-            judged=$judged$SUBS
-          else
-            cut_segments "$judged"
-            judged=""
-            cut_segments "${lines[$index]}" unpaired-substitution
-          fi
-          index=$((index + 1))
-        done
-      fi
+        fi
+        index=$((index + 1))
+      done
     fi
     index=$((end + 1))
   done
-  cut_segments "$judged"
-  # Published callers read SEGMENTS without command-local metadata. Preserve
-  # their whole-command model answer as well as the optional per-command one.
-  COMMAND_MODEL=modeled
-  index=0
-  while [ "$index" -lt "${#SEGMENT_MODELS[@]}" ]; do
-    [ "${SEGMENT_MODELS[$index]}" != unmodeled ] || COMMAND_MODEL=unmodeled
-    index=$((index + 1))
-  done
-}
-cut_segments() { # TEXT [UNMODELED-CAUSE] [published] -> append command answers
-  local text=$1 cause=${2:-} projection=${3:-} cut original line raw masked model detail length executable published
-  if [ "$projection" = published ]; then
-    # Independent project hooks consume this scalar view. Open shell input
-    # before comments can remove its closing quote or join outer arguments.
-    if mask_spans "$text" published; then
-      cut=$MASKED
-    else
-      cut=$text
-    fi
-  elif [ -n "$cause" ]; then
-    cut=$text
-    original=$text
-  elif mask_spans "$text" boundaries; then
+  # A quote the reader could not pair leaves the original text to be cut
+  # whole, the reach a caller's patterns had before any span was read.
+  if mask_spans "$judged"; then
     cut=$MASKED
-    original=$UNMASKED
   else
-    cause=unpaired-text
-    cut=$text
-    original=$text
+    cut=$joined
   fi
-  # Descriptor duplication's ampersand belongs to this command, including
-  # raw fallback commands with the redirection between executable and verb.
-  cut=${cut//>\&/>$MASK}
-  cut=${cut//<\&/<$MASK}
   cut=${cut//;/$NL}
   cut=${cut//&/$NL}
   cut=${cut//\|/$NL}
@@ -407,178 +282,26 @@ cut_segments() { # TEXT [UNMODELED-CAUSE] [published] -> append command answers
   cut=${cut//\)/$NL}
   cut=${cut//\`/$NL}
   while IFS= read -r line; do
-    if [ "$projection" = published ]; then
-      uncommented "$line"
-      published=$BARE
-      SEGMENTS=$SEGMENTS$published$NL
-      continue
-    fi
-    length=${#line}
-    raw=${original:0:length}
-    original=${original:length+1}
-    [ -n "${raw//[[:space:]]/}" ] || continue
-    if [ -n "$cause" ]; then
-      model=unmodeled
-      detail=$cause
-    else
-      COMMAND_MODEL=modeled
-      COMMAND_CAUSE=""
-      uncommented "$line"
-      raw=${raw:0:${#BARE}}
-      mask_spans "$raw" boundaries || return 1
-      masked=$MASKED
-      command_position "$masked"
-      executable=$COMMAND_TEXTS
-      case "$raw" in
-        *[\<\>]\&*) COMMAND_MODEL=unmodeled; COMMAND_CAUSE=descriptor-redirection ;;
-      esac
-      if [ "$COMMAND_MODEL" = modeled ]; then
-        if mask_spans "$raw"; then
-          # Opening shell input or substitutions produces command text. Feed
-          # that text back through this same boundary and model owner.
-          if [ "$COMMAND_MODEL" = modeled ] && [ "$MASKED" != "$masked" ]; then
-            cut_segments "$UNMASKED"
-            continue
-          fi
-        else
-          COMMAND_MODEL=unmodeled
-          COMMAND_CAUSE=unpaired-text
-        fi
-      fi
-      if [ "$COMMAND_MODEL" = unmodeled ]; then
-        cut_segments "$raw" "$COMMAND_CAUSE"
-        continue
-      fi
-      model=modeled
-      detail=""
-      raw=$MASKED
-    fi
-    published=$raw
-    if [ "$model" = unmodeled ]; then
-      # Keep raw command-local fallback separate from the published view.
-      # Published hooks need shell input opened and quoted arguments masked.
-      cut_segments "$raw" "" published
-    else
-      SEGMENTS=$SEGMENTS$published$NL
-    fi
-    SEGMENT_COMMANDS[${#SEGMENT_COMMANDS[@]}]=${executable:-}
-    SEGMENT_TEXTS[${#SEGMENT_TEXTS[@]}]=$raw
-    SEGMENT_MODELS[${#SEGMENT_MODELS[@]}]=$model
-    SEGMENT_CAUSES[${#SEGMENT_CAUSES[@]}]=$detail
+    uncommented "$line"
+    out=$out$BARE$NL
   done <<EOF
 $cut
 EOF
+  SEGMENTS=$out
 }
-# The executable of a simple command. Assignments and redirections are the
-# shell's, and launching prefixes consume their own options before the child
-# executable. Shell control words also introduce a command, but only when
-# unquoted and without a path. An option value named `kendex` is never that child.
-# These prefixes occur in tool commands judged by block-worktree-refresh;
-# Only a modeled invocation keeps its remaining words as arguments.
-command_position() { # SEGMENT -> COMMAND_TEXTS
-  local rest=$1 word raw name data launcher="" operand="" options=1
-  COMMAND_TEXTS=""
-  while :; do
-    rest=${rest#"${rest%%[![:space:]]*}"}
-    [ -n "$rest" ] || return 0
-    word=${rest%%[[:space:]]*}
-    raw=$word
-    word=${word//[\'\"]/}
-    if [ -n "$operand" ]; then
-      operand=""
-    elif [[ $word =~ ^[0-9]*[\<\>] ]]; then
-      [[ $word =~ ^[0-9]*[\<\>]+$ ]] && operand=1
-    elif [ -n "$launcher" ] && [ -n "$options" ] && [ "$word" = -- ]; then
-      options=""
-    elif [ -n "$launcher" ] && [ -n "$options" ] && [[ $word == -* ]]; then
-      case "$launcher:$word" in
-        command:-v | command:-V) return 0 ;;
-        command:-p | env:-i | env:--ignore-environment | sudo:-E | exec:-c | exec:-l | exec:-cl | time:-p) ;;
-        env:--unset | env:--chdir | env:-u | env:-C | env:-iC | sudo:--user | sudo:--group | sudo:--host | sudo:--prompt | sudo:--chdir | sudo:--chroot | sudo:--role | sudo:--type | sudo:--other-user | sudo:--close-from | sudo:-u | sudo:-g | sudo:-h | sudo:-p | sudo:-D | sudo:-ED | sudo:-R | sudo:-r | sudo:-t | sudo:-U | sudo:-C | timeout:--signal | timeout:--kill-after | timeout:-s | timeout:-k | exec:-a | exec:-cla) operand=1 ;;
-        env:--unset=* | env:--chdir=*) ;;
-        *) COMMAND_MODEL=unmodeled; COMMAND_CAUSE=prefix-options; COMMAND_TEXTS=$1; return 0 ;;
-      esac
-    elif [ "$launcher" = timeout ]; then
-      # timeout's duration precedes the child command.
-      launcher=""
-      options=1
-    elif [ "$launcher" = time ]; then
-      launcher=""
-      options=1
-      continue
-    elif [[ $word =~ ^[[:alpha:]_][[:alnum:]_]*= ]] && { [ -z "$launcher" ] || [ "$launcher" = env ]; }; then
-      :
-    elif [ "$raw" = "$word" ] && [ -z "$launcher" ] && [[ $word =~ ^(if|elif|then|else|while|until|do|!|\{|co[p]roc)$ ]]; then
-      :
-    elif [ "$raw" = time ] && [ -z "$launcher" ]; then
-      launcher=time
-      options=1
-    else
-      name=${word##*/}
-      case "$name" in
-        env | command | sudo | timeout | exec)
-          launcher=$name
-          options=1
-          ;;
-        eval)
-          case "${rest#"$raw"}" in *[[:space:]]--*) COMMAND_MODEL=unmodeled; COMMAND_CAUSE=eval-options ;; esac
-          if [ "${2:-}" = shell ]; then
-            COMMAND_TEXTS=$rest
-            return 0
-          fi
-          data=${rest#"$raw"}
-          data=${data#"${data%%[![:space:]]*}"}
-          case "$data" in
-            [\'\"]*) COMMAND_TEXTS=$rest; return 0 ;;
-          esac
-          launcher=""
-          options=1
-          ;;
-        kendex | sh | bash | dash | ash | zsh | ksh | fish | source | .)
-          COMMAND_TEXTS=$rest
-          return 0
-          ;;
-        git | gh)
-          # Commit messages and PR/issue creation fields are data. Other git
-          # and gh commands can run arguments, aliases or configured commands.
-          # Their executable name alone proves no argument contract.
-          case "$name" in
-            git) data='^[[:space:]]+commit([[:space:]]|$)' ;;
-            gh) data='^[[:space:]]+(pr|issue)[[:space:]]+create([[:space:]]|$)' ;;
-          esac
-          if [[ ${rest#"$raw"} =~ $data ]]; then
-            COMMAND_TEXTS=$rest
-          else
-            COMMAND_MODEL=unmodeled
-            COMMAND_CAUSE=argument-contract
-            COMMAND_TEXTS=$1
-          fi
-          return 0
-          ;;
-        # These tool commands consume arguments as data. The catalog GitHub
-        # and Linear CLIs and dev return writer have the same contract.
-        echo | printf | cat | pwd | cd | pushd | true | false | : | github.sh | linear.sh | dev-return-write)
-          COMMAND_TEXTS=$rest
-          return 0
-          ;;
-        'fi' | 'done' | 'esac' | \})
-          return 0
-          ;;
-        *)
-          COMMAND_MODEL=unmodeled
-          COMMAND_CAUSE=unknown-command
-          COMMAND_TEXTS=$1
-          return 0
-          ;;
-      esac
-    fi
-    rest=${rest#"$raw"}
-  done
-}
-
-# Published callers judge each executable candidate. Assignments precede the
-# command; subsequent words remain candidates because launchers can run them.
-command_text() { # SEGMENT -> COMMAND_TEXTS, one candidate suffix per line
+# The parts of one segment the shell may execute, each from a word on to the
+# segment's end. Leading `NAME=value` words are assignments the shell makes for
+# the command, not the command, so each is stepped over; a quoted value was
+# masked to one word by command_segments. What the executable word runs is not
+# always that word: `bash` runs a script among the words after it, and a
+# launcher such as `env` or `xargs` runs a word of its own. Which word depends
+# on options that may take the next word as their value, and a launcher may
+# launch another, so no option is read and no launcher is listed: the
+# executable word starts a text, and so does every word after it. A word that
+# only stands as an argument is judged as a command too, which is the direction
+# a guard fails in. A quote around a word stays, as the caller's pattern may
+# allow one. COMMAND_TEXTS is empty when the segment executes nothing.
+command_text() { # SEGMENT -> COMMAND_TEXTS
   local rest=$1 word name
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
