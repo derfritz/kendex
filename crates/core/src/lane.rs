@@ -11,16 +11,14 @@ use crate::error::{CoreError, Result};
 use crate::guard::{Repo, path_from};
 use crate::process::Hardened;
 
-/// The item whose launch marker binds this linked worktree, or no lane.
-/// Main checkouts and detached or non-item branches are not lane worktrees.
+/// The item whose launch marker binds the enclosing linked worktree, or no lane.
+/// A nested clone uses its enclosing worktree's branch and marker.
+/// Without an enclosing linked checkout or item branch, there is no lane.
 /// A failed git or marker read is an error, never an unmarked checkout.
 pub fn marked_worktree(dir: &Path) -> Result<Option<String>> {
-    let Some(repo) = Repo::probe(dir)? else {
+    let Some(repo) = Repo::enclosing_linked(dir)? else {
         return Ok(None);
     };
-    if !repo.is_linked() {
-        return Ok(None);
-    }
     let output = Hardened::git(&["symbolic-ref", "--quiet", "HEAD"], Some(&repo.worktree)).run()?;
     if output.status.code() == Some(1) {
         return Ok(None);

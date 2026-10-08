@@ -138,29 +138,43 @@ fn every_project_writer_refuses_before_writes_and_its_unmarked_control_lands() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "fixture paths are valid")]
 fn the_explicit_override_lands_for_every_project_writer() {
-    for args in [
-        vec![
-            "refresh",
-            "--scope",
-            "project",
-            "--yes",
-            "--leave",
-            "--lane-refresh",
-        ],
-        vec!["apply", "--yes", "--leave", "--lane-refresh"],
-        vec!["updates", "--apply", "--yes", "--leave", "--lane-refresh"],
-    ] {
-        let fixture = world();
-        fixture.mark();
-        let output = kendex(&fixture, &fixture.linked, &args);
-        assert!(output.status.success(), "override {args:?}: {output:?}");
-        assert!(
-            fixture
-                .linked
-                .join(".claude/skills/deploy/SKILL.md")
-                .is_file()
-        );
+    for directory in ["", "vendor"] {
+        for args in [
+            vec![
+                "refresh",
+                "--scope",
+                "project",
+                "--yes",
+                "--leave",
+                "--lane-refresh",
+            ],
+            vec!["apply", "--yes", "--leave", "--lane-refresh"],
+            vec!["updates", "--apply", "--yes", "--leave", "--lane-refresh"],
+        ] {
+            let fixture = world();
+            if directory == "vendor" {
+                fixture.git(
+                    &fixture.linked,
+                    &[
+                        "clone",
+                        "-q",
+                        fixture.main.to_str().expect("fixture path"),
+                        "vendor",
+                    ],
+                );
+            }
+            fixture.mark();
+            let output = kendex(&fixture, &fixture.linked.join(directory), &args);
+            assert!(output.status.success(), "override {args:?}: {output:?}");
+            assert!(
+                fixture
+                    .linked
+                    .join(".claude/skills/deploy/SKILL.md")
+                    .is_file()
+            );
+        }
     }
 }
 
@@ -281,22 +295,42 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
         "subscribe",
         "unsubscribe",
     ] {
-        for control in ["own", "global"] {
+        for (directory, control) in [
+            ("", "own"),
+            ("", "global"),
+            ("vendor", "own"),
+            ("vendor", "global"),
+        ] {
             if cfg!(windows) && control == "global" {
                 continue;
             }
-            let fixture = world();
+            let mut fixture = world();
             let caller = fixture.main.join(".claude/worktrees/caller");
+            fs::create_dir_all(caller.parent().expect("caller parent"))
+                .expect("worktree directory");
+            fs::remove_file(fixture.linked.join("kendex.toml")).expect("remove nearer marker");
             fixture.git(
                 &fixture.main,
                 &[
                     "worktree",
-                    "add",
-                    "-qb",
-                    "caller",
+                    "move",
+                    fixture.linked.to_str().expect("fixture path"),
                     caller.to_str().expect("fixture path"),
                 ],
             );
+            fixture.linked = caller.clone();
+            let cwd = caller.join(directory);
+            if directory == "vendor" {
+                fixture.git(
+                    &caller,
+                    &[
+                        "clone",
+                        "-q",
+                        fixture.main.to_str().expect("fixture path"),
+                        "vendor",
+                    ],
+                );
+            }
             let catalog = fixture.root.join("catalog");
             let reference = catalog.to_str().expect("catalog path");
             let env = kendex_core::env::Env::host_rooted(&fixture.root);
@@ -383,27 +417,40 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                 _ => unreachable!("writer table"),
             };
             let before = snapshot(&fixture.root);
-            let output = kendex(&fixture, &caller, &args);
+            let output = kendex(&fixture, &cwd, &args);
             assert!(
                 cross_checkout_refusal(&output, &caller, &fixture.main),
                 "{verb}: {output:?}"
             );
             assert_eq!(snapshot(&fixture.root), before, "{verb} refusal wrote");
 
+            if control == "own" && matches!(verb, "refresh" | "apply" | "updates") {
+                fixture.mark();
+                let before = snapshot(&fixture.root);
+                let output = kendex(&fixture, &cwd, &args);
+                assert!(refusal(&output), "marked {directory} {verb}: {output:?}");
+                assert_eq!(
+                    snapshot(&fixture.root),
+                    before,
+                    "marked {verb} refusal wrote"
+                );
+                fs::remove_file(&fixture.marker).expect("remove enclosing marker");
+            }
+
             // Change one real guard input: the destination now belongs to
             // the caller, or it is global. The same refusal assertion must
             // turn red, and the real command must complete successfully.
             if control == "own" {
                 for name in ["kendex.toml", ".kendex-lock.json"] {
-                    fs::copy(fixture.main.join(name), caller.join(name)).expect("own declaration");
+                    fs::copy(fixture.main.join(name), cwd.join(name)).expect("own declaration");
                 }
                 let install = kendex(
                     &fixture,
-                    &caller,
+                    &cwd,
                     &["apply", "--scope", "project", "--yes", "--leave"],
                 );
                 assert!(install.status.success(), "own setup: {install:?}");
-                let borrowed = caller.join(".claude/skills/borrowed");
+                let borrowed = cwd.join(".claude/skills/borrowed");
                 fs::create_dir_all(&borrowed).expect("own adopt fixture");
                 fs::write(
                     borrowed.join("SKILL.md"),
@@ -415,7 +462,7 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
             } else {
                 args.extend(["--scope", "global"]);
             }
-            let output = kendex(&fixture, &caller, &args);
+            let output = kendex(&fixture, &cwd, &args);
             assert!(
                 !cross_checkout_refusal(&output, &caller, &fixture.main),
                 "must-fail {control} {verb}: {output:?}"
@@ -428,9 +475,28 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
 #[test]
 #[allow(clippy::expect_used, reason = "fixture paths are valid")]
 fn named_cross_checkout_writes_require_the_existing_override() {
-    for verb in ["refresh", "apply", "updates"] {
+    for (directory, verb) in [
+        ("", "refresh"),
+        ("vendor", "refresh"),
+        ("", "apply"),
+        ("vendor", "apply"),
+        ("", "updates"),
+        ("vendor", "updates"),
+    ] {
         for scope in ["project", "all"] {
             let fixture = world();
+            if directory == "vendor" {
+                fixture.git(
+                    &fixture.linked,
+                    &[
+                        "clone",
+                        "-q",
+                        fixture.main.to_str().expect("fixture path"),
+                        "vendor",
+                    ],
+                );
+            }
+            let cwd = fixture.linked.join(directory);
             let other = fixture.root.join("other");
             fs::create_dir_all(&other).expect("other project");
             fs::copy(fixture.main.join("kendex.toml"), other.join("kendex.toml"))
@@ -450,7 +516,7 @@ fn named_cross_checkout_writes_require_the_existing_override() {
                 args.push("--apply");
             }
             let before = snapshot(&fixture.root);
-            let output = kendex(&fixture, &fixture.linked, &args);
+            let output = kendex(&fixture, &cwd, &args);
             assert!(
                 cross_checkout_refusal(&output, &fixture.linked, &other),
                 "{args:?}: {output:?}"
@@ -458,7 +524,7 @@ fn named_cross_checkout_writes_require_the_existing_override() {
             assert_eq!(snapshot(&fixture.root), before, "named refusal wrote");
             // The override is the missing-input control for this refusal.
             args.push("--lane-refresh");
-            let output = kendex(&fixture, &fixture.linked, &args);
+            let output = kendex(&fixture, &cwd, &args);
             assert!(
                 !cross_checkout_refusal(&output, &fixture.linked, &other),
                 "override control stayed green"

@@ -8,6 +8,8 @@ use crate::test_util::lane::{Fixture, snapshot};
 
 enum Case {
     Marked,
+    NestedMarked,
+    NestedUnmarked,
     TaggedBranch,
     Unmarked,
     NoMarkers,
@@ -23,9 +25,15 @@ enum Case {
 
 #[test]
 #[allow(clippy::expect_used, reason = "a fixture operation must succeed")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one marker identity table shares its fixture and assertions"
+)]
 fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
     for case in [
         Case::Marked,
+        Case::NestedMarked,
+        Case::NestedUnmarked,
         Case::TaggedBranch,
         Case::Unmarked,
         Case::NoMarkers,
@@ -40,8 +48,34 @@ fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
     ] {
         let fixture = Fixture::new("KEN-2299");
         fixture.mark();
+        let nested = fixture.linked.join("vendor");
         let mut checked = &fixture.linked;
         match case {
+            Case::NestedMarked | Case::NestedUnmarked => {
+                // Git clone owns a nearer non-linked repository. The launch
+                // marker still belongs to the checkout enclosing that clone.
+                fixture.git(
+                    &fixture.linked,
+                    &[
+                        "clone",
+                        "-q",
+                        fixture.main.to_str().expect("fixture path"),
+                        "vendor",
+                    ],
+                );
+                checked = &nested;
+                let enclosing = kendex_core::guard::Repo::enclosing_linked(checked)
+                    .expect("enclosing repository")
+                    .expect("linked checkout");
+                assert_eq!(
+                    enclosing.worktree,
+                    fixture.linked.canonicalize().expect("linked root")
+                );
+                assert!(kendex_core::guard::Repo::enclosed_by_linked(checked).expect("enclosure"));
+                if matches!(case, Case::NestedUnmarked) {
+                    fs::remove_file(&fixture.marker).expect("remove enclosing marker");
+                }
+            }
             Case::Marked => {
                 // Repo keeps std's resolved spelling. On Windows this row
                 // must compare it with the marker's reduced root spelling.
@@ -80,10 +114,11 @@ fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
         let result = marked_worktree(checked);
         assert_eq!(snapshot(&fixture.root), before, "marker inspection wrote");
         match case {
-            Case::Marked | Case::TaggedBranch => {
+            Case::Marked | Case::NestedMarked | Case::TaggedBranch => {
                 assert_eq!(result.expect("marker read"), Some("KEN-2299".into()))
             }
             Case::Unmarked
+            | Case::NestedUnmarked
             | Case::NoMarkers
             | Case::Main
             | Case::Outside

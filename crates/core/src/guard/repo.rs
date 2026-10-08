@@ -214,16 +214,23 @@ impl Repo {
     /// repository encloses the last. A git that cannot answer at any level
     /// is the error [`Repo::probe`] returns, never a `false`.
     pub fn enclosed_by_linked(dir: &Path) -> Result<bool> {
+        Ok(Self::enclosing_linked(dir)?.is_some())
+    }
+
+    /// The nearest linked checkout containing `dir`, including one enclosing
+    /// a nested clone or submodule. Repository probing and failures follow
+    /// the same traversal as [`Self::enclosed_by_linked`].
+    pub fn enclosing_linked(dir: &Path) -> Result<Option<Repo>> {
         let mut at = dir.to_path_buf();
         loop {
             let Some(repo) = Repo::probe(&at)? else {
-                return Ok(false);
+                return Ok(None);
             };
             if repo.is_linked() {
-                return Ok(true);
+                return Ok(Some(repo));
             }
             let Some(above) = repo.worktree.parent() else {
-                return Ok(false);
+                return Ok(None);
             };
             at = above.to_path_buf();
         }

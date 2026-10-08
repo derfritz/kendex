@@ -59,11 +59,9 @@ fn check_project_writes(cli: &Cli) -> Result<Option<String>, Box<dyn std::error:
             }
         }
     }
-    if let Some(caller) = Repo::probe(cwd)?
-        && caller.is_linked()
-    {
+    if let Some(caller) = Repo::enclosing_linked(cwd)? {
         for root in projects {
-            let destination = Repo::probe(root)?;
+            let destination = Repo::enclosing_linked(root)?;
             if destination.as_ref().map(|repo| &repo.worktree) != Some(&caller.worktree) {
                 return Ok(Some(format!(
                     "worktree-project-write: target={}; caller={}; run from the target checkout for this project write",
