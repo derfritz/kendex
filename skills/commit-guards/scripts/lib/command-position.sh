@@ -4,7 +4,7 @@
 # by what it spells: block-worktree-refresh. Pure Bash, no external command,
 # and sourcing it defines functions and constants only.
 #
-# `command_segments TEXT` reports each simple command in aligned arrays. A
+# `command_segments TEXT` leaves SEGMENTS holding one segment per line. A
 # segment is the text between two of `;`, `&`, `|`, `(`, `)`, `` ` `` and a
 # line end, with a backslash-newline continuing it, and without the comment a
 # `#` beginning a word starts. What the shell would not run as a command is
@@ -15,19 +15,21 @@
 # shell, `eval`, `source` or `.` word runs is kept as the command text it is,
 # and a command substitution is kept wherever it stands. A quote or a
 # substitution that cannot be paired makes the command unmodeled.
+# Optional command-local results are advertised by COMMAND_SEGMENTS_API.
 # SEGMENT_TEXTS, SEGMENT_COMMANDS, SEGMENT_MODELS and SEGMENT_CAUSES hold answers for
 # each simple command. A modeled command keeps its argument contract even
 # when a neighboring command is unmodeled. Unsupported commands keep raw
 # text within their own boundaries. Unknown programs may launch arguments.
 #
-# `command_text SEGMENT` leaves COMMAND_TEXTS holding the segment from its
-# executable word, after control words, assignments and launching prefixes.
-# Arguments of modeled data commands do not become commands. An unmodeled
-# result leaves the segment whole for the caller's text check.
+# `command_text SEGMENT` keeps the published executable-candidate contract:
+# COMMAND_TEXTS holds each remaining word and its suffix, one per line, after
+# assignments. The command-local reader uses command_position to select the
+# executable and report whether the argument contract is modeled.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
 # UNMASKED and COMMAND_TEXTS, so a caller does not use those names for its own state.
 
+COMMAND_SEGMENTS_API=command-local-v1
 NL=$'\n'
 MASK=$'\001'
 # A `#` begins a comment wherever it begins a word, which is the start of the
@@ -61,7 +63,20 @@ runs_shell_text() { # TEXT [stdin] -> 0 when its executable runs shell text
   while [[ $bare =~ $REDIRECT_RE ]]; do
     bare=${bare/"${BASH_REMATCH[0]}"/ }
   done
-  command_text "$bare" shell
+  if [ "$mode" = published ]; then
+    # Published scalar consumers have no unsupported-command result. Retain
+    # their conservative shell-input projection through candidate suffixes.
+    command_text "$bare"
+    while IFS= read -r rest; do
+      word=${rest%%[[:space:]]*}
+      word=${word//[\'\"]/}
+      case "${word##*/}" in *sh | eval | source | .) return 0 ;; esac
+    done <<EOF
+$COMMAND_TEXTS
+EOF
+    return 1
+  fi
+  command_position "$bare" shell
   word=${COMMAND_TEXTS%%[[:space:]]*}
   rest=${COMMAND_TEXTS#"$word"}
   word=${word//[\'\"]/}
@@ -236,7 +251,7 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
     out=$out$head
     original=$original$head
     before=${out##*$SEP}
-    if [ "${2:-}" = boundaries ] || [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
+    if [ "${2:-}" = boundaries ] || [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before" "${2:-span}"; then
       # A single-quoted span expands nothing, so all of it is masked; a
       # double-quoted one has its substitutions lifted out first.
       if [ "$quote" = "'" ]; then
@@ -268,6 +283,7 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
 command_segments() { # TEXT -> aligned SEGMENT_TEXTS, SEGMENT_MODELS, SEGMENT_CAUSES
   local joined=${1//\\$NL/ } line index count delim expands end term judged="" cause
   local lines
+  SEGMENTS=""
   SEGMENT_COMMANDS=()
   SEGMENT_TEXTS=()
   SEGMENT_MODELS=()
@@ -294,7 +310,7 @@ EOF
       continue
     fi
     delim=${BASH_REMATCH[2]}
-    command_text "$BARE"
+    command_position "$BARE"
     cause=$COMMAND_CAUSE
     case "$BARE" in *$SEP*) cause=heredoc-command-list ;; esac
     expands=1
@@ -349,9 +365,17 @@ EOF
     index=$((end + 1))
   done
   cut_segments "$judged"
+  # Published callers read SEGMENTS without command-local metadata. Preserve
+  # their whole-command model answer as well as the optional per-command one.
+  COMMAND_MODEL=modeled
+  index=0
+  while [ "$index" -lt "${#SEGMENT_MODELS[@]}" ]; do
+    [ "${SEGMENT_MODELS[$index]}" != unmodeled ] || COMMAND_MODEL=unmodeled
+    index=$((index + 1))
+  done
 }
 cut_segments() { # TEXT [UNMODELED-CAUSE] -> append command answers
-  local text=$1 cause=${2:-} cut original line raw masked model detail length executable
+  local text=$1 cause=${2:-} cut original line raw masked model detail length executable published
   if [ -n "$cause" ]; then
     cut=$text
     original=$text
@@ -388,7 +412,7 @@ cut_segments() { # TEXT [UNMODELED-CAUSE] -> append command answers
       raw=${raw:0:${#BARE}}
       mask_spans "$raw" boundaries || return 1
       masked=$MASKED
-      command_text "$masked"
+      command_position "$masked"
       executable=$COMMAND_TEXTS
       case "$raw" in
         *[\<\>]\&*) COMMAND_MODEL=unmodeled; COMMAND_CAUSE=descriptor-redirection ;;
@@ -414,6 +438,14 @@ cut_segments() { # TEXT [UNMODELED-CAUSE] -> append command answers
       detail=""
       raw=$MASKED
     fi
+    published=$raw
+    if [ "$model" = unmodeled ]; then
+      # Keep raw command-local fallback separate from the published view.
+      # Published hooks need shell input opened and quoted arguments masked.
+      uncommented "$raw"
+      if mask_spans "$BARE" published; then published=$MASKED; fi
+    fi
+    SEGMENTS=$SEGMENTS$published$NL
     SEGMENT_COMMANDS[${#SEGMENT_COMMANDS[@]}]=${executable:-}
     SEGMENT_TEXTS[${#SEGMENT_TEXTS[@]}]=$raw
     SEGMENT_MODELS[${#SEGMENT_MODELS[@]}]=$model
@@ -428,7 +460,7 @@ EOF
 # unquoted and without a path. An option value named `kendex` is never that child.
 # These prefixes occur in tool commands judged by block-worktree-refresh;
 # Only a modeled invocation keeps its remaining words as arguments.
-command_text() { # SEGMENT -> COMMAND_TEXTS
+command_position() { # SEGMENT -> COMMAND_TEXTS
   local rest=$1 word raw name data launcher="" operand="" options=1
   COMMAND_TEXTS=""
   while :; do
@@ -526,5 +558,32 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
       esac
     fi
     rest=${rest#"$raw"}
+  done
+}
+
+# Published callers judge each executable candidate. Assignments precede the
+# command; subsequent words remain candidates because launchers can run them.
+command_text() { # SEGMENT -> COMMAND_TEXTS, one candidate suffix per line
+  local rest=$1 word name
+  while :; do
+    rest=${rest#"${rest%%[![:space:]]*}"}
+    word=${rest%%[[:space:]]*}
+    case "$word" in
+      [[:alpha:]_]*=*) ;;
+      *) break ;;
+    esac
+    name=${word%%=*}
+    case "$name" in
+      *[![:alnum:]_]*) break ;;
+    esac
+    rest=${rest#"$word"}
+  done
+  COMMAND_TEXTS=""
+  while :; do
+    rest=${rest#"${rest%%[![:space:]]*}"}
+    [ -n "$rest" ] || return 0
+    COMMAND_TEXTS=$COMMAND_TEXTS$rest$NL
+    word=${rest%%[[:space:]]*}
+    rest=${rest#"$word"}
   done
 }

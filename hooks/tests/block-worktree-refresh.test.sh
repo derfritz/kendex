@@ -932,6 +932,172 @@ a global Pi install four directories under the home finds the reader in the home
 a harness root relocated out of the home finds the reader in the home's shared tree|$TMP_ROOT/relocated/codex/hooks
 ROWS
 
+echo "=== block-worktree-refresh: independently refreshed reader contracts ==="
+# Published hooks read SEGMENTS and scan it without executable anchoring.
+# Keep that caller fixed here. The rest of the copy retains the production
+# lookup and target checks. No historical Git object is needed in CI.
+CURRENT_LIBRARY="$(cd "$TEST_DIR/../.." && pwd)/skills/commit-guards/scripts/lib/command-position.sh"
+GLOBAL_LIBRARY="$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh"
+OLD_LIBRARY="$TMP_ROOT/published-reader.sh"
+cat >"$OLD_LIBRARY" <<'LIB'
+NL=$'\n'
+MASK=$'\001'
+command_segments() { SEGMENTS=$1$NL; }
+command_text() { COMMAND_TEXTS=$1$NL; }
+LIB
+published_caller() { # CURRENT-HOOK OUTPUT -> published scalar consumer
+  awk '
+    /^  SEGMENT_INDEX=0$/ {
+      print "  while IFS= read -r SEGMENT; do"; skipping=1; start++; next
+    }
+    skipping && /read_options "\$TAIL" "\$SEGMENT"/ {
+      print "    [[ $SEGMENT =~ $MOVE_RE ]] && MOVED=1"
+      print "    writing_verb \"$SEGMENT\""
+      print "    [ -n \"$FOUND\" ] || continue"
+      skipping=0; collection=1
+    }
+    skipping { next }
+    collection && /^  done$/ {
+      print "  done <<EOF"; print "$SEGMENTS"; print "EOF"
+      collection=0; finish++; next
+    }
+    /\[\[ \$COMMAND_TEXTS =~ \^/ {
+      print "  [[ $COMMAND_TEXTS =~ $KENDEX_RE ]] || return 0"; anchor++; next
+    }
+    { print }
+    END { if (start != 1 || finish != 1 || anchor != 1) exit 2 }
+  ' "$1" >"$2"
+}
+compatibility_table() { # CURRENT-HOOK CURRENT-READER -> fixed mixed-pair assertions
+  local hook=$1 reader=$2 at dir command expected first label pair
+  local published="$WT/compatibility/.codex/published/block-worktree-refresh.sh"
+  local current="$WT/compatibility/.codex/current/block-worktree-refresh.sh"
+  local notice="$TMP_ROOT/compatibility-notice/.codex/hooks/block-worktree-refresh.sh"
+  mkdir -p "${published%/*}" "${current%/*}" "${notice%/*}" "$WT/.agents/skills/commit-guards/scripts/lib"
+  published_caller "$hook" "$published"
+  cp "$hook" "$current"
+  cp "$hook" "$notice"
+  # The project retains the current reader. Global wins through the real
+  # hook lookup when the current project hook meets the published reader.
+  cp "$reader" "$WT/.agents/skills/commit-guards/scripts/lib/command-position.sh"
+  while IFS='|' read -r pair label world expected first command; do
+    [ -n "$label" ] || continue
+    command=$(printf '%b' "$command")
+    case "$world" in
+      worktree) dir="$WT" ;;
+      main) dir="$MAIN" ;;
+    esac
+    case "$pair" in
+      published) cp "$reader" "$GLOBAL_LIBRARY"; at=$published ;;
+      current)
+        cp "$OLD_LIBRARY" "$GLOBAL_LIBRARY"
+        at=$current
+        [ "$world" != main ] || at=$notice
+        ;;
+    esac
+    set +e
+    (cd "$dir" && json_for "$command" "$dir" | PATH="$CLI_WITH:$CLI_NONE" "$BASH_BIN" "$at" >"$OUT_FILE" 2>"$ERR_FILE")
+    rc=$?
+    set -e
+    assert_eq "rc=$rc first=$(first_line)" "rc=$expected first=$first" "$label"
+  done <<'ROWS'
+published|published hook retains the project write refusal with a current global reader|worktree|2|block-worktree-refresh: refused=refresh|kendex refresh
+published|published hook retains a wrapped write refusal with a current global reader|worktree|2|block-worktree-refresh: refused=refresh|sudo -H kendex refresh
+published|published hook retains read commands with a current global reader|worktree|0|-|kendex verify
+published|published hook retains global scope with a current global reader|worktree|0|-|kendex refresh --global
+published|published hook retains modeled titles with a current global reader|worktree|0|-|gh pr create --title 'kendex refresh'
+published|published hook retains modeled commit data with a current global reader|worktree|0|-|git commit -m 'kendex refresh'
+published|published hook retains data heredocs with a current global reader|worktree|0|-|cat \0074\0074'EOF'\nkendex refresh\nEOF
+published|published hook opens shell input behind unknown launchers|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh' dummy --global
+published|published hook opens shell input after unsupported shell options|worktree|2|block-worktree-refresh: refused=refresh|bash -c -- 'kendex refresh' dummy --help
+published|published hook masks earlier assignment data before a later real write|worktree|2|block-worktree-refresh: refused=refresh|FOO="kendex help" nohup kendex refresh
+current|current project hook detects a published global reader before collecting writes|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex refresh
+current|current project hook detects a published reader before consuming read results|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex verify
+current|current project hook grants no scope exemption without the capability|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex refresh --global
+current|current project hook grants no title exemption without the capability|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|gh pr create --title 'kendex refresh'
+current|current project hook passes data with no kendex word despite the capability gap|worktree|0|-|git status
+current|the plain-command remedy clears the capability refusal in the main checkout|main|0|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex refresh
+ROWS
+  # An unsupported selected dependency uses the existing context notice.
+  assert_eq "$(jq -r '.hookSpecificOutput.additionalContext | split("\n")[0]' "$OUT_FILE")" \
+    'block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh' \
+    'the selected-reader gap reaches the caller as context'
+  cp "$CURRENT_LIBRARY" "$GLOBAL_LIBRARY"
+}
+compatibility_table "$HOOK" "$CURRENT_LIBRARY"
+# The published command_text result is independent of optional metadata.
+candidate_contract() { # READER -> fixed published suffix assertion
+  local actual
+  actual=$("$BASH_BIN" -c 'set -euo pipefail; source "$1"; command_text "$2"; printf "%s" "$COMMAND_TEXTS"' \
+    contract "$1" 'FOO=1 env kendex refresh')
+  assert_eq "$actual" $'env kendex refresh\nkendex refresh\nrefresh' \
+    'published command_text keeps every executable candidate after assignments'
+}
+candidate_contract "$CURRENT_LIBRARY"
+while IFS='|' read -r input expected; do
+  actual=$("$BASH_BIN" -c 'set -euo pipefail; source "$1"; command_segments "$2"; printf "%s" "$COMMAND_MODEL"' \
+    contract "$CURRENT_LIBRARY" "$input")
+  assert_eq "$actual" "$expected" 'published whole-command model includes every command and accepts empty input'
+done <<'ROWS'
+|modeled
+# comment|modeled
+kendex verify|modeled
+git status|unmodeled
+ROWS
+for defect in scalar-output scalar-projection published-candidates dependency-capability; do
+  at="$TMP_ROOT/compatibility-control-$defect"
+  mkdir -p "$at"
+  cp "$HOOK" "$at/hook.sh"
+  cp "$CURRENT_LIBRARY" "$at/reader.sh"
+  case "$defect" in
+    scalar-output)
+      awk '
+        /^  SEGMENTS=""$/ || /^    SEGMENTS=\$SEGMENTS\$published\$NL$/ { print "  :"; count++; next }
+        { print }
+        END { if (count != 2) exit 2 }
+      ' "$CURRENT_LIBRARY" >"$at/reader.sh"
+      ;;
+    scalar-projection)
+      awk '
+        /^    if \[ "\$model" = unmodeled \]; then$/ {
+          print "    if false; then"; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CURRENT_LIBRARY" >"$at/reader.sh"
+      ;;
+    published-candidates)
+      awk '
+        /^    COMMAND_TEXTS=\$COMMAND_TEXTS\$rest\$NL$/ {
+          print; print "    return 0"; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CURRENT_LIBRARY" >"$at/reader.sh"
+      ;;
+    dependency-capability)
+      awk '
+        /if \[ "\$\{COMMAND_SEGMENTS_API:-\}" != command-local-v1 \]; then/ {
+          print "  if false; then"; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$HOOK" >"$at/hook.sh"
+      ;;
+  esac
+  saved_pass=$PASS saved_fail=$FAIL
+  PASS=0 FAIL=0
+  if [ "$defect" = published-candidates ]; then
+    candidate_contract "$at/reader.sh" >"$at/result"
+  else
+    compatibility_table "$at/hook.sh" "$at/reader.sh" >"$at/result"
+  fi
+  failed=$FAIL
+  PASS=$saved_pass FAIL=$saved_fail
+  [ "$failed" -gt 0 ] && status=0 || status=1
+  assert_eq "$status" 0 "the $defect defect turns the mixed-pair assertions red"
+done
+
 echo "=== block-worktree-refresh: command classification controls ==="
 # Each copy keeps the real executable and verb text. Removing the executable
 # check must refuse an argument; removing command detection must allow a real
