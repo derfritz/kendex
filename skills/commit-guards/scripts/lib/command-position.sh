@@ -357,9 +357,9 @@ EOF
 # executable. Shell control words also introduce a command, but only when
 # unquoted and without a path. An option value named `kendex` is never that child.
 # These prefixes occur in tool commands judged by block-worktree-refresh;
-# an ordinary executable's remaining words stay arguments.
+# Only a modeled invocation keeps its remaining words as arguments.
 command_text() { # SEGMENT -> COMMAND_TEXTS
-  local rest=$1 word raw name launcher="" operand="" options=1
+  local rest=$1 word raw name data launcher="" operand="" options=1
   COMMAND_TEXTS=""
   if [ "${COMMAND_MODEL:-modeled}" = unmodeled ]; then
     COMMAND_TEXTS=$1
@@ -420,9 +420,25 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
           COMMAND_TEXTS=$rest
           return 0
           ;;
-        # These tool commands consume their arguments as data. The catalog
-        # GitHub and Linear CLIs and dev return writer have the same contract.
-        git | gh | echo | printf | cat | true | false | : | github.sh | linear.sh | dev-return-write)
+        git | gh)
+          # Commit messages and PR/issue creation fields are data. Other git
+          # and gh commands can run arguments, aliases or configured commands.
+          # Their executable name alone proves no argument contract.
+          case "$name" in
+            git) data='^[[:space:]]+commit([[:space:]]|$)' ;;
+            gh) data='^[[:space:]]+(pr|issue)[[:space:]]+create([[:space:]]|$)' ;;
+          esac
+          if [[ ${rest#"$raw"} =~ $data ]]; then
+            COMMAND_TEXTS=$rest
+          else
+            COMMAND_MODEL=unmodeled
+            COMMAND_TEXTS=$1
+          fi
+          return 0
+          ;;
+        # These tool commands consume arguments as data. The catalog GitHub
+        # and Linear CLIs and dev return writer have the same contract.
+        echo | printf | cat | pwd | cd | pushd | true | false | : | github.sh | linear.sh | dev-return-write)
           COMMAND_TEXTS=$rest
           return 0
           ;;

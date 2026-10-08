@@ -355,6 +355,37 @@ KENDEX_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]|$)'
 # on, so it runs where the payload says and nowhere else.
 PLAIN_RE='^[[:blank:]]*([[:alnum:]_./-]*/)?kendex([[:blank:]]+[[:alnum:]_./=:@,+-]+)*[[:blank:]]*$'
 PLAIN=""
+# Both readers use the shipped writing-verb vocabulary. The whole-text
+# reader proves no arguments, so even updates is a possible write there.
+WRITE_VERB_RE='(refresh|apply|add|remove|update-pi|updates|pin|fork|adopt|drift-hook|source (add|remove|enable|disable)|marketplace (subscribe|unsubscribe))'
+
+# Unsupported shell tool commands retain all their text. No word in that
+# text proves a help, scope, preview or target exemption. Keep scanning after
+# data and read words: an assignment or an earlier read can precede a write.
+unmodeled_write() { # TEXT -> FOUND
+  local rest=${1//[\"\']/} word group="" kendex=""
+  FOUND=""
+  rest=${rest//[<>\&;|()\`]/ }
+  while :; do
+    rest=${rest#"${rest%%[![:space:]]*}"}
+    [ -n "$rest" ] || return 0
+    word=${rest%%[[:space:]]*}
+    rest=${rest#"$word"}
+    if [[ $word =~ $KENDEX_RE ]]; then
+      kendex=1
+      group=""
+    elif [ -n "$kendex" ]; then
+      if [[ "$group $word" =~ ^$WRITE_VERB_RE$ ]]; then
+        FOUND="$group $word"
+        return 0
+      elif [[ $word =~ ^$WRITE_VERB_RE$ ]]; then
+        FOUND=$word
+        return 0
+      fi
+      case "$word" in source | marketplace) group=$word ;; esac
+    fi
+  done
+}
 
 # The writing verb of one segment, and the text after it. A quote may close
 # the command word or wrap the verb, as in `"/path/kendex" refresh` and
@@ -380,11 +411,7 @@ writing_verb() { # SEGMENT -> FOUND, TAIL
   FOUND=""
   TAIL=""
   command_text "$1"
-  if [ "$COMMAND_MODEL" = modeled ]; then
-    [[ $COMMAND_TEXTS =~ ^[\"\']?([^[:space:]]*/)?kendex[\"\']?([[:space:]]|$) ]] || return 0
-  else
-    [[ $COMMAND_TEXTS =~ $KENDEX_RE ]] || return 0
-  fi
+  [[ $COMMAND_TEXTS =~ ^[\"\']?([^[:space:]]*/)?kendex[\"\']?([[:space:]]|$) ]] || return 0
   rest=${COMMAND_TEXTS#*"${BASH_REMATCH[0]}"}
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
@@ -407,29 +434,29 @@ writing_verb() { # SEGMENT -> FOUND, TAIL
       lead="$lead $raw"
       continue
     fi
-    case "$group:$word" in
-      :refresh | :apply | :add | :remove | :update-pi | :updates | :pin | :fork | :adopt | :drift-hook)
-        FOUND=$word
-        ;;
-      source:add | source:remove | source:enable | source:disable | marketplace:subscribe | marketplace:unsubscribe)
-        FOUND="$group $word"
-        ;;
-      source:-*)
-        lead="$lead $raw"
-        [ "$word" != --scope ] || value=1
-        continue
-        ;;
-      *:source | *:marketplace)
-        group=$word
-        lead=""
-        continue
-        ;;
-      *)
-        group=""
-        lead=""
-        continue
-        ;;
-    esac
+    if [ -z "$group" ] && [[ $word =~ ^$WRITE_VERB_RE$ ]]; then
+      FOUND=$word
+    elif [[ "$group $word" =~ ^$WRITE_VERB_RE$ ]]; then
+      FOUND="$group $word"
+    else
+      case "$group:$word" in
+        source:-*)
+          lead="$lead $raw"
+          [ "$word" != --scope ] || value=1
+          continue
+          ;;
+        *:source | *:marketplace)
+          group=$word
+          lead=""
+          continue
+          ;;
+        *)
+          group=""
+          lead=""
+          continue
+          ;;
+      esac
+    fi
     TAIL="$lead $glued$rest"
     return 0
   done
@@ -625,51 +652,62 @@ if [ -z "$FOUND_LIBRARY" ]; then
   WRITES=unread
 else
   command_segments "$COMMAND"
-  while IFS= read -r SEGMENT; do
-    [[ $SEGMENT =~ $MOVE_RE ]] && MOVED=1
-    writing_verb "$SEGMENT"
-    [ -n "$FOUND" ] || continue
-    read_options "$TAIL" "$SEGMENT"
-    # A verb asked for its help or its plan prints and writes nothing.
-    [ -z "$ARG_READ" ] || continue
-    # `update-pi --check` previews and writes nothing.
-    if [ "$FOUND" = update-pi ] && [[ $TAIL =~ $CHECK_RE ]]; then
-      continue
-    fi
-    if [ "$FOUND" = updates ] && [ -z "$ARG_APPLY" ]; then
-      continue
-    fi
-    # Only `refresh`, `apply` and `updates --apply` take `--project-path`;
-    # every other writing verb has no such form and is judged where it is
-    # typed. A relative target after a move resolves against a directory
-    # the words do not establish, so it proves nothing.
-    verb_kind "$FOUND"
-    if [ "$KIND" = target ] && [ -n "$ARG_TARGET" ]; then
-      if [ -n "$MOVED" ]; then
-        case "$ARG_PATH" in
-          /*) ;;
-          *) ARG_PATH="" ;;
-        esac
+  if [ "$COMMAND_MODEL" = unmodeled ]; then
+    unmodeled_write "$COMMAND"
+    if [ -n "$FOUND" ]; then
+      if [[ $COMMAND =~ $MOVE_RE ]]; then
+        VERB=$FOUND
+        refuse moved "$VERB"
       fi
-      WRITES=$WRITES$FOUND$FIELD$ARG_PATH${FIELD}named$NL
-      continue
+      WRITES=$FOUND$FIELD${FIELD}unsure$NL
     fi
-    [ "$ARG_SCOPE" != global ] || continue
-    if [ -n "$MOVED" ]; then
-      VERB=$FOUND
-      refuse moved "$VERB"
-    fi
-    # A whole-scope verb whose words are unsure may be handed a
-    # `--project-path` the words do not show, so no project is proven even
-    # where a bare one would be.
-    if [ "$KIND" = target ] && [ -n "$ARG_UNSURE" ]; then
-      WRITES=$WRITES$FOUND$FIELD${FIELD}unsure$NL
-      continue
-    fi
-    WRITES=$WRITES$FOUND$FIELD$FIELD$NL
-  done <<EOF
+  else
+    while IFS= read -r SEGMENT; do
+      [[ $SEGMENT =~ $MOVE_RE ]] && MOVED=1
+      writing_verb "$SEGMENT"
+      [ -n "$FOUND" ] || continue
+      read_options "$TAIL" "$SEGMENT"
+      # A verb asked for its help or its plan prints and writes nothing.
+      [ -z "$ARG_READ" ] || continue
+      # `update-pi --check` previews and writes nothing.
+      if [ "$FOUND" = update-pi ] && [[ $TAIL =~ $CHECK_RE ]]; then
+        continue
+      fi
+      if [ "$FOUND" = updates ] && [ -z "$ARG_APPLY" ]; then
+        continue
+      fi
+      # Only `refresh`, `apply` and `updates --apply` take `--project-path`;
+      # every other writing verb has no such form and is judged where it is
+      # typed. A relative target after a move resolves against a directory
+      # the words do not establish, so it proves nothing.
+      verb_kind "$FOUND"
+      if [ "$KIND" = target ] && [ -n "$ARG_TARGET" ]; then
+        if [ -n "$MOVED" ]; then
+          case "$ARG_PATH" in
+            /*) ;;
+            *) ARG_PATH="" ;;
+          esac
+        fi
+        WRITES=$WRITES$FOUND$FIELD$ARG_PATH${FIELD}named$NL
+        continue
+      fi
+      [ "$ARG_SCOPE" != global ] || continue
+      if [ -n "$MOVED" ]; then
+        VERB=$FOUND
+        refuse moved "$VERB"
+      fi
+      # A whole-scope verb whose words are unsure may be handed a
+      # `--project-path` the words do not show, so no project is proven even
+      # where a bare one would be.
+      if [ "$KIND" = target ] && [ -n "$ARG_UNSURE" ]; then
+        WRITES=$WRITES$FOUND$FIELD${FIELD}unsure$NL
+        continue
+      fi
+      WRITES=$WRITES$FOUND$FIELD$FIELD$NL
+    done <<EOF
 $SEGMENTS
 EOF
+  fi
 fi
 if [ -z "$WRITES" ]; then
   exit 0

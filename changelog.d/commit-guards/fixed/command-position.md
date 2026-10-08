@@ -1,1 +1,1 @@
-- The shared command reader identifies executables in modeled simple commands. Unsupported programs, prefix options, descriptor redirections and heredocs with later commands return an unmodeled result and retain whole-text judgement.
+- The shared command reader identifies executables in modeled simple commands. It models git commit messages and GitHub PR and issue creation fields as data. Other git and gh invocations, unsupported programs, prefix options, descriptor redirections and heredocs with later commands retain whole-text judgement.

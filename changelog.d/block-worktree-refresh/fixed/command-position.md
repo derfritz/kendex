@@ -1,1 +1,1 @@
-- PR titles, commit messages, issue titles and heredoc data in modeled commands no longer trigger the worktree guard. Unsupported command forms retain the whole-text check, so unknown launchers and shell syntax cannot hide a project write.
+- PR titles, commit messages, issue titles and heredoc data in modeled commands no longer trigger the worktree guard. Unsupported forms retain the whole-text check without taking help, scope, preview or target exemptions from raw text. Earlier data or read words cannot hide a later project write.

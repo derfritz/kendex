@@ -346,7 +346,7 @@ a backtick substitution cuts the words after it from the segment|2|block-worktre
 the same for refresh|2|block-worktree-refresh: refused=refresh|kendex refresh --global \0140true\0140 --scope project
 a quoted option remains an option of refresh|2|block-worktree-refresh: refused=refresh|kendex refresh --global '--scope' project
 a comment after a global write leaves it whole|0|-|kendex refresh --global # a note
-a stderr redirection and a pipe after a global write leave it whole|0|-|kendex refresh --global 2>&1 | tail
+global scope in an unsupported descriptor form proves no exemption|2|block-worktree-refresh: refused=refresh|kendex refresh --global 2>&1 | tail
 a quoted span the reader masks is still found in the command text|0|-|kendex add --global "./a b"
 a substitution lifted out of a quoted word leaves a segment the command does not hold, so no global scope is read|2|block-worktree-refresh: refused=add|kendex add --global "a\0044(echo b)" --scope project
 marketplace list is a read|0|-|kendex marketplace list
@@ -407,7 +407,7 @@ plan after a write verb is a read|0|-|kendex apply --plan
 kendex help VERB is the help subcommand of clap, a read|0|-|kendex help refresh
 kendex help alone names no verb|0|-|kendex help
 help before an output redirection is still the word bash passes|0|-|kendex refresh --help >out
-help beside a stderr redirection and a pipe is still the word bash passes|0|-|kendex refresh --help 2>&1 | head
+help in an unsupported descriptor form proves no read exemption|2|block-worktree-refresh: refused=refresh|kendex refresh --help 2>&1 | head
 a redirection target spelling --help is a file, not help|2|block-worktree-refresh: refused=refresh|kendex refresh > --help
 help after a standalone -- is a positional, not help|2|block-worktree-refresh: refused=refresh|kendex refresh -- --help
 help beside an expansion may follow a -- the expansion holds, so it is not read|2|block-worktree-refresh: refused=refresh|kendex refresh \0044X --help
@@ -502,6 +502,9 @@ a redirection target spelling --project-path is a file, not a target|2|block-wor
 a stderr redirection target is a file, not the scope|2|block-worktree-refresh: refused=refresh|kendex refresh -y 2> --scope=global
 a redirection target glued to its operator is a file|2|block-worktree-refresh: refused=refresh|kendex refresh -y >--global
 a quoted redirection target is a file|2|block-worktree-refresh: refused=refresh|kendex refresh -y > "--global"
+a quoted filename cannot grant global scope|2|block-worktree-refresh: refused=refresh|kendex refresh >"out --global"
+a quoted filename cannot grant help|2|block-worktree-refresh: refused=refresh|kendex refresh >"out --help"
+a quoted filename cannot grant a target|2|block-worktree-refresh: refused=refresh|kendex refresh >"out --project-path /elsewhere"
 an escaped-space redirection target is one file|2|block-worktree-refresh: refused=refresh|kendex refresh -y >\\ --global
 a standalone -- ends the options before --global|2|block-worktree-refresh: refused=refresh|kendex refresh -y -- --global
 a standalone -- ends the options before --project-path|2|block-worktree-refresh: refused=refresh|kendex refresh -y -- --project-path
@@ -555,6 +558,48 @@ a function declaration outside the model falls back|2|block-worktree-refresh: re
 an unknown launcher running quoted shell text falls back|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh'
 a sudo long option with an attached value falls back|2|block-worktree-refresh: refused=refresh|sudo --user=root kendex refresh
 an unmodeled sudo environment option falls back|2|block-worktree-refresh: refused=refresh|sudo --preserve-env=GIT_DIR kendex refresh
+a comment cannot grant global scope|2|block-worktree-refresh: refused=refresh|nohup kendex refresh # --global
+a comment cannot grant help|2|block-worktree-refresh: refused=refresh|nohup kendex refresh # --help
+a comment cannot grant plan|2|block-worktree-refresh: refused=apply|nohup kendex apply # --plan
+a comment cannot grant preview|2|block-worktree-refresh: refused=update-pi|nohup kendex update-pi # --check
+a descriptor form cannot take global scope from its comment|2|block-worktree-refresh: refused=refresh|2>&1 kendex refresh # --global
+an outer shell positional cannot grant global scope|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh' dummy --global
+an outer shell positional cannot grant a global scope value|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh' dummy --scope global
+an outer shell positional cannot grant help|2|block-worktree-refresh: refused=refresh|bash -c -- 'kendex refresh' dummy --help
+an outer shell positional cannot grant plan|2|block-worktree-refresh: refused=apply|nohup bash -c 'kendex apply' dummy --plan
+an outer shell positional cannot grant preview|2|block-worktree-refresh: refused=update-pi|nohup bash -c 'kendex update-pi' dummy --check
+an outer shell positional cannot grant a target|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh' dummy --project-path /elsewhere
+an assignment cannot grant global scope|2|block-worktree-refresh: refused=refresh|FLAGS=--global nohup kendex refresh
+an assignment cannot grant help|2|block-worktree-refresh: refused=refresh|FLAGS=--help nohup kendex refresh
+a read in an assignment cannot hide a later write|2|block-worktree-refresh: refused=refresh|FOO="kendex help" nohup kendex refresh
+an earlier data occurrence cannot hide a later write|2|block-worktree-refresh: refused=refresh|FOO="kendex verify" nohup kendex refresh
+an earlier read cannot hide a later write|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex help; kendex refresh'
+an unsupported command cannot take scope from a quoted filename|2|block-worktree-refresh: refused=refresh|nohup kendex refresh >"out --global"
+an unsupported command cannot take help from a quoted filename|2|block-worktree-refresh: refused=refresh|nohup kendex refresh >"out --help"
+an unsupported command cannot take a target from a quoted filename|2|block-worktree-refresh: refused=refresh|nohup kendex refresh >"out --project-path /elsewhere"
+a quoted path in an unsupported form proves no target|2|block-worktree-refresh: refused=refresh|kendex refresh --project-path "/Users/me/My Projects/app" 2>&1
+an outer help word cannot hide updates applying|2|block-worktree-refresh: refused=updates|nohup bash -c 'kendex updates --apply' dummy --help
+an outer help word cannot hide an add|2|block-worktree-refresh: refused=add|nohup bash -c 'kendex add orch' dummy --help
+an outer plan word cannot hide a remove|2|block-worktree-refresh: refused=remove|nohup bash -c 'kendex remove orch' dummy --plan
+an outer global word cannot hide a pin|2|block-worktree-refresh: refused=pin|nohup bash -c 'kendex pin skill orch v1' dummy --global
+an outer global scope cannot hide a fork|2|block-worktree-refresh: refused=fork|nohup bash -c 'kendex fork skill orch' dummy --scope global
+an outer help word cannot hide adoption|2|block-worktree-refresh: refused=adopt|nohup bash -c 'kendex adopt skill orch' dummy --help
+an outer global word cannot hide drift-hook|2|block-worktree-refresh: refused=drift-hook|nohup bash -c 'kendex drift-hook -y' dummy --global
+an outer global word cannot hide source add|2|block-worktree-refresh: refused=source add|nohup bash -c 'kendex source add x owner/repo' dummy --global
+an outer help word cannot hide source remove|2|block-worktree-refresh: refused=source remove|nohup bash -c 'kendex source remove x' dummy --help
+an outer global scope cannot hide source enable|2|block-worktree-refresh: refused=source enable|nohup bash -c 'kendex source enable x' dummy --scope global
+an outer plan word cannot hide source disable|2|block-worktree-refresh: refused=source disable|nohup bash -c 'kendex source disable x' dummy --plan
+an outer help word cannot hide subscription|2|block-worktree-refresh: refused=marketplace subscribe|nohup bash -c 'kendex marketplace subscribe owner/repo' dummy --help
+an outer global word cannot hide unsubscription|2|block-worktree-refresh: refused=marketplace unsubscribe|nohup bash -c 'kendex marketplace unsubscribe x' dummy --global
+source options in raw text cannot hide its write|2|block-worktree-refresh: refused=source disable|nohup kendex source --scope global disable x
+an unquoted git submodule runner retains the old refusal|2|block-worktree-refresh: refused=refresh|git submodule foreach kendex refresh
+an unquoted git bisect runner retains the old refusal|2|block-worktree-refresh: refused=refresh|git bisect run kendex refresh
+a quoted git submodule runner is unmodeled|2|block-worktree-refresh: refused=refresh|git submodule foreach 'kendex refresh'
+a quoted git rebase runner is unmodeled|2|block-worktree-refresh: refused=refresh|git rebase -x 'kendex refresh' HEAD~1
+a git rebase long exec option is unmodeled|2|block-worktree-refresh: refused=refresh|git rebase --exec 'kendex refresh' HEAD~1
+a git shell alias is unmodeled|2|block-worktree-refresh: refused=refresh|git -c alias.r='!kendex refresh' r
+a GitHub shell alias declaration is unmodeled|2|block-worktree-refresh: refused=refresh|gh alias set --shell r 'kendex refresh'
+a GitHub alias invocation is unmodeled|2|block-worktree-refresh: refused=refresh|gh r kendex refresh
 ROWS
 MODELED_ROWS=$COMMAND_ROWS
 COMMAND_ROWS=$FALLBACK_ROWS
@@ -600,6 +645,10 @@ and at the project scope spelled out|payload|own|0|-|kendex update-pi --scope pr
 update-pi in a catalog worktree with its own kendex-local.toml passes|payload|catalog-local|0|-|kendex update-pi
 update-pi in a worktree with no manifest of its own is refused|payload|worktree|2|block-worktree-refresh: refused=update-pi|kendex update-pi
 a target naming the main checkout is the shared base, the refresh owner's write|payload|worktree|2|block-worktree-refresh: shared=refresh|kendex refresh --project-path $MAIN
+an outer positional naming an unrelated existing project cannot prove a target|payload|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh' dummy --project-path $OUTSIDE/app
+an unsupported command with a quoted main path proves no target|payload|worktree|2|block-worktree-refresh: refused=refresh|kendex refresh --project-path "$MAIN" 2>&1
+an unsupported command in an owned worktree proves no target|payload|own|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path "$MAIN" 2>&1
+an outer scope cannot prove a target in an owned worktree|payload|own|2|block-worktree-refresh: unproven=refresh|nohup bash -c 'kendex refresh' dummy --global
 and from a worktree that owns its manifest too|payload|own|2|block-worktree-refresh: shared=apply|kendex apply --project-path $MAIN
 a project below the main checkout's root is the shared base too|payload|own|2|block-worktree-refresh: shared=updates|kendex updates --apply --project-path $MAIN/app
 a single-quoted target spelled with an equals sign is still a target|payload|own|2|block-worktree-refresh: shared=apply|kendex apply '--project-path=$MAIN'
@@ -933,13 +982,45 @@ control() { # DEFECT -> rerun command_table against a disposable install
       ;;
     fallback)
       awk '
-        /\[\[ \$COMMAND_TEXTS =~ \$KENDEX_RE \]\] \|\| return 0/ {
-          print "    return 0"; count++; next
+        /^    unmodeled_write "\$COMMAND"$/ {
+          print; print "    FOUND=\"\""; count++; next
         }
         { print }
         END { if (count != 1) exit 2 }
       ' "$HOOK" >"$at/hooks/block-worktree-refresh.sh"
       COMMAND_ROWS=$FALLBACK_ROWS
+      ;;
+    data-contract)
+      awk '
+        /if \[\[ \$\{rest#"\$raw"\} =~ \$data \]\]; then/ {
+          print "          if :; then"; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
+      COMMAND_ROWS='a git command runner does not consume its words as data|2|block-worktree-refresh: refused=refresh|git submodule foreach kendex refresh'
+      ;;
+    exemption)
+      awk '
+        /^    unmodeled_write "\$COMMAND"$/ {
+          print; print "    [[ $COMMAND != *--global* ]] || FOUND=\"\""; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$HOOK" >"$at/hooks/block-worktree-refresh.sh"
+      COMMAND_ROWS='raw global text cannot exempt a project write|2|block-worktree-refresh: refused=refresh|nohup kendex refresh # --global'
+      ;;
+    earlier-read)
+      awk '
+        /^    word=\$\{rest%%\[\[:space:\]\]\*\}$/ && inside {
+          print; print "    [ \"$word\" != help ] || return 0"; count++; next
+        }
+        /^unmodeled_write\(\)/ { inside=1 }
+        /^}/ { inside=0 }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$HOOK" >"$at/hooks/block-worktree-refresh.sh"
+      COMMAND_ROWS='a data read before a real write cannot stop fallback|2|block-worktree-refresh: refused=refresh|FOO="kendex help" nohup kendex refresh'
       ;;
     *) printf 'control: unknown defect=%s\n' "$defect" >&2; exit 2 ;;
   esac
@@ -966,6 +1047,9 @@ control keyword
 control time
 control exec
 control fallback
+control data-contract
+control exemption
+control earlier-read
 
 echo
 echo "block-worktree-refresh: $PASS passed, $FAIL failed"
