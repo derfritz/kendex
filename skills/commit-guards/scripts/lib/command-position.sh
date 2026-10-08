@@ -57,15 +57,16 @@ REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
 # Keep quotes until executable selection: a quoted control word is a command
 # name. Strip them from the selected name so `"/bin/bash"` still names a shell.
 # Redirection targets never name an interpreter.
-runs_shell_text() { # TEXT [stdin] -> 0 when its executable runs shell text
-  local bare=$1 word raw rest mode=${2:-span} operand="" options=1 stdin=""
+runs_shell_text() { # TEXT [stdin|published] -> 0 when its executable runs shell text
+  local bare=$1 word raw rest projection=${2:-span} mode=${2:-span} operand="" options=1 stdin=""
   case "$bare" in *\<\<\<*) mode=stdin ;; esac
   while [[ $bare =~ $REDIRECT_RE ]]; do
     bare=${bare/"${BASH_REMATCH[0]}"/ }
   done
-  if [ "$mode" = published ]; then
+  if [ "$projection" = published ]; then
     # Published scalar consumers have no unsupported-command result. Retain
-    # their conservative shell-input projection through candidate suffixes.
+    # their conservative shell-input projection through candidate suffixes,
+    # independently of the carrier that selects current shell operands.
     command_text "$bare"
     while IFS= read -r rest; do
       word=${rest%%[[:space:]]*}

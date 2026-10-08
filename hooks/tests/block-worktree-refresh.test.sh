@@ -1036,6 +1036,49 @@ published|a later input line cannot lend scope to a commented write|worktree|2|b
 published|an outer separator cannot hide a commented write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text' dummy --global; kendex verify
 published|unsupported shell options retain quoted comment boundaries|worktree|2|block-worktree-refresh: refused=refresh|bash -c -- 'kendex refresh # text' dummy --global
 published|unsupported launcher options retain quoted comment boundaries|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -c 'kendex refresh # text' dummy --global
+published|nohup here-string write keeps the published protocol|worktree|2|block-worktree-refresh: refused=refresh|nohup bash \0074\0074\0074 'kendex refresh'
+published|sudo here-string write keeps the published protocol|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash \0074\0074\0074 "kendex refresh"
+published|cat here-string data keeps the published protocol|worktree|0|-|cat \0074\0074\0074 'kendex refresh'
+published|nohup here-string read keeps the published protocol|worktree|0|-|nohup bash \0074\0074\0074 'kendex verify'
+published|nohup here-string write keeps the published protocol with inner global scope|worktree|2|block-worktree-refresh: refused=refresh|nohup bash \0074\0074\0074 'kendex refresh --global'
+published|nohup here-string write keeps the published protocol with outer --global|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --global \0074\0074\0074 'kendex refresh # text'
+published|nohup here-string write keeps the published protocol with outer --scope global|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --scope global \0074\0074\0074 'kendex refresh # text'
+published|nohup here-string write keeps the published protocol with outer --help|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --help \0074\0074\0074 'kendex refresh # text'
+published|nohup here-string write keeps the published protocol with outer --project-path OWN_TARGET|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --project-path OWN_TARGET \0074\0074\0074 'kendex refresh # text'
+published|nohup here-string write keeps the published protocol with outer --check|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --check \0074\0074\0074 'kendex refresh # text'
+published|nohup here-string write keeps the published protocol with outer --plan|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --plan \0074\0074\0074 'kendex refresh # text'
+published|nohup here-string write keeps the published protocol with outer --dry-run|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --dry-run \0074\0074\0074 'kendex refresh # text'
+published|nohup heredoc write keeps the published protocol with outer --global|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --global \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|nohup heredoc write keeps the published protocol with outer --scope global|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --scope global \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|nohup heredoc write keeps the published protocol with outer --help|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --help \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|nohup heredoc write keeps the published protocol with outer --project-path OWN_TARGET|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --project-path OWN_TARGET \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|nohup heredoc write keeps the published protocol with outer --check|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --check \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|nohup heredoc write keeps the published protocol with outer --plan|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --plan \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|nohup heredoc write keeps the published protocol with outer --dry-run|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -s -- dummy --dry-run \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|sudo here-string write keeps the published protocol with outer --global|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --global \0074\0074\0074 'kendex refresh # text'
+published|sudo here-string write keeps the published protocol with outer --scope global|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --scope global \0074\0074\0074 'kendex refresh # text'
+published|sudo here-string write keeps the published protocol with outer --help|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --help \0074\0074\0074 'kendex refresh # text'
+published|sudo here-string write keeps the published protocol with outer --project-path OWN_TARGET|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --project-path OWN_TARGET \0074\0074\0074 'kendex refresh # text'
+published|sudo here-string write keeps the published protocol with outer --check|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --check \0074\0074\0074 'kendex refresh # text'
+published|sudo here-string write keeps the published protocol with outer --plan|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --plan \0074\0074\0074 'kendex refresh # text'
+published|sudo here-string write keeps the published protocol with outer --dry-run|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --dry-run \0074\0074\0074 'kendex refresh # text'
+published|sudo quoted command write keeps the published protocol with outer --scope global|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -c 'kendex refresh # text' dummy --scope global
+published|sudo quoted command write keeps the published protocol with outer --help|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -c 'kendex refresh # text' dummy --help
+published|sudo quoted command write keeps the published protocol with outer --project-path OWN_TARGET|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -c 'kendex refresh # text' dummy --project-path OWN_TARGET
+published|sudo quoted command write keeps the published protocol with outer --check|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -c 'kendex refresh # text' dummy --check
+published|sudo quoted command write keeps the published protocol with outer --plan|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -c 'kendex refresh # text' dummy --plan
+published|sudo quoted command write keeps the published protocol with outer --dry-run|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -c 'kendex refresh # text' dummy --dry-run
+published|sudo heredoc write keeps the published protocol with outer --global|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --global \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|sudo heredoc write keeps the published protocol with outer --scope global|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --scope global \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|sudo heredoc write keeps the published protocol with outer --help|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --help \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|sudo heredoc write keeps the published protocol with outer --project-path OWN_TARGET|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --project-path OWN_TARGET \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|sudo heredoc write keeps the published protocol with outer --check|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --check \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|sudo heredoc write keeps the published protocol with outer --plan|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --plan \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|sudo heredoc write keeps the published protocol with outer --dry-run|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -s -- dummy --dry-run \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|sudo quoted command read keeps the published protocol with outer --global|worktree|0|-|sudo -H bash -c 'kendex verify' dummy --global
+published|sudo heredoc read keeps the published protocol|worktree|0|-|sudo -H bash \0074\0074'EOF'\nkendex verify\nEOF
+published|assignment and nohup here-string write keeps the published protocol|worktree|2|block-worktree-refresh: refused=refresh|FOO='kendex help' nohup bash \0074\0074\0074 'kendex refresh # text'
+published|quoted shell input keeps outer plan words outside its write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text' dummy --plan
 current|current project hook detects a published global reader before collecting writes|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex refresh
 current|current project hook detects a published reader before consuming read results|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex verify
 current|current project hook grants no scope exemption without the capability|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex refresh --global
@@ -1069,7 +1112,7 @@ done <<'ROWS'
 kendex verify|modeled
 git status|unmodeled
 ROWS
-for defect in scalar-output scalar-projection projection-order published-candidates dependency-capability; do
+for defect in scalar-output scalar-projection projection-order projection-protocol published-candidates dependency-capability; do
   at="$TMP_ROOT/compatibility-control-$defect"
   mkdir -p "$at"
   cp "$HOOK" "$at/hook.sh"
@@ -1096,6 +1139,17 @@ for defect in scalar-output scalar-projection projection-order published-candida
         /^    if mask_spans "\$text" published; then$/ {
           print "    uncommented \"$text\""
           print "    if mask_spans \"$BARE\" published; then"; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CURRENT_LIBRARY" >"$at/reader.sh"
+      ;;
+    projection-protocol)
+      awk '
+        /^runs_shell_text\(\)/ { helper=1 }
+        /^}$/ { helper=0 }
+        helper && /^  if \[ "\$projection" = published \]; then$/ {
+          sub(/\$projection/, "$mode"); print; count++; next
         }
         { print }
         END { if (count != 1) exit 2 }
