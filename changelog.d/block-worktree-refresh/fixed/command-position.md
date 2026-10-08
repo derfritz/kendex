@@ -1,0 +1,1 @@
+- PR titles, commit messages, issue titles and heredoc data that name kendex refresh no longer trigger the worktree guard. Real kendex project writes still use the scope and target checks.

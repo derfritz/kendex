@@ -16,13 +16,10 @@
 # English under it is not asserted. The remedy the refusal must carry is the
 # verb's global option, pinned as the option spelling itself.
 #
-# HOOK_UNDER_TEST overrides the script under test so the must-fail controls
-# (a no-op hook, an always-block hook) run against these assertions. The copy
-# sits under this repository, tmp/ included, and keeps the name
-# block-worktree-refresh.sh: the hook finds the command reader by walking up
-# from its own directory, and a copy parked outside the checkout refuses every
-# command as missing-library; the payload rows read the keyed-line prefix
-# from the file name, and a copy under another name fails them as malformed.
+# Inputs: hooks/block-worktree-refresh.sh, the commit-guards command-position
+# library, hooks/tests/lib/{first-line,payload-rows}.sh and core's discover.rs.
+# HOOK_UNDER_TEST selects a planted copy. Controls install that copy beside
+# its command reader outside the checkout, with the hook's original basename.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -346,7 +343,7 @@ a quote in another command leaves a global source write whole|0|-|echo "x y" && 
 a quoted reference on a continued line cuts the words after it too|2|block-worktree-refresh: refused=source add|kendex source --global add x \\\n  "owner/repo" --scope project
 a backtick substitution cuts the words after it from the segment|2|block-worktree-refresh: refused=source remove|kendex source --global remove \0140echo x\0140 --scope project
 the same for refresh|2|block-worktree-refresh: refused=refresh|kendex refresh --global \0140true\0140 --scope project
-a quoted span after refresh is opened as command text and cut the same way|2|block-worktree-refresh: refused=refresh|kendex refresh --global '--scope' project
+a quoted option remains an option of refresh|2|block-worktree-refresh: refused=refresh|kendex refresh --global '--scope' project
 a comment after a global write leaves it whole|0|-|kendex refresh --global # a note
 a stderr redirection and a pipe after a global write leave it whole|0|-|kendex refresh --global 2>&1 | tail
 a quoted span the reader masks is still found in the command text|0|-|kendex add --global "./a b"
@@ -357,6 +354,24 @@ the verb is found on the second line|2|block-worktree-refresh: refused=apply|ech
 an absolute path in front of kendex is still kendex|2|block-worktree-refresh: refused=refresh|/home/u/.cargo/bin/kendex refresh
 a quoted path in front of kendex is still kendex|2|block-worktree-refresh: refused=refresh|"/home/u/.cargo/bin/kendex" refresh
 a quoted verb is still the verb|2|block-worktree-refresh: refused=refresh|kendex 'refresh'
+an assignment before the executable does not hide the write|2|block-worktree-refresh: refused=refresh|FOO=1 kendex refresh
+a quoted assignment before the executable does not hide the write|2|block-worktree-refresh: refused=refresh|FOO="kendex refresh" kendex refresh
+env assignments before the executable do not hide the write|2|block-worktree-refresh: refused=refresh|env FOO=1 kendex refresh
+command before the executable does not hide the write|2|block-worktree-refresh: refused=refresh|command kendex refresh
+command's path option still executes the write|2|block-worktree-refresh: refused=refresh|command -p kendex refresh
+combined prefixes still execute the write|2|block-worktree-refresh: refused=refresh|FOO=1 env -i BAR=2 command -- kendex refresh
+an env option value named kendex is not the executable|0|-|env -u kendex printf refresh
+a command lookup names the executable without running it|0|-|command -v kendex refresh
+a verbose command lookup names the executable without running it|0|-|command -V kendex refresh
+a plain argument naming kendex is data|0|-|printf '%s %s' kendex refresh
+a quoted executable name passed as an argument is data|0|-|printf '%s %s' "kendex" refresh
+a PR title passed to the GitHub script is data|0|-|.agents/skills/github/scripts/github.sh pr-create --title 'chore(VG-265): CI: adopt the 6-hourly kendex refresh schedule' --body-file tmp/body.md
+a PR title passed to gh is data|0|-|gh pr create --title 'adopt the kendex refresh schedule' --body-file tmp/body.md
+a commit message passed to git is data|0|-|git commit -m 'chore(TLK-79): adopt the kendex refresh schedule'
+an issue title passed to the Linear script is data|0|-|.agents/skills/linear/scripts/linear.sh issues create --title 'adopt the kendex refresh schedule'
+a script run through bash still receives its title as data|0|-|bash .agents/skills/github/scripts/github.sh pr-create --title 'kendex refresh'
+a PR title does not hide a subsequent real write|2|block-worktree-refresh: refused=refresh|gh pr create --title 'kendex refresh'; kendex refresh
+a commit message does not hide a subsequent real write|2|block-worktree-refresh: refused=refresh|git commit -m 'kendex refresh'; kendex refresh
 the project scope spelled out is still the project scope|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project
 the -g scope passes|0|-|kendex refresh -g
 the --global scope passes|0|-|kendex refresh --global
@@ -416,6 +431,8 @@ nor does a backtick|0|-|echo 'a\0140.' "run kendex refresh from main"
 a hash after a quoted separator starts no comment|2|block-worktree-refresh: refused=refresh|FOO="a;#" kendex refresh
 an unquoted separator after a quoted argument still starts a command|2|block-worktree-refresh: refused=update-pi|dev-return-write --validate-note "pass (CI)." ; kendex update-pi
 the pair inside a heredoc body is fed to a command, not run|0|-|cat <<EOF\nkendex refresh\nEOF
+a GitHub script's heredoc body remains data|0|-|.agents/skills/github/scripts/github.sh pr-create --body-file /dev/stdin \0074\0074'EOF'\nAdopt the kendex refresh schedule.\nEOF
+a script's heredoc body cannot hide a later real write|2|block-worktree-refresh: refused=refresh|.agents/skills/github/scripts/github.sh pr-create --body-file /dev/stdin \0074\0074'EOF'\nkendex refresh\nEOF\nkendex refresh
 the pair behind a hash on the line is a comment|0|-|echo hi # kendex refresh
 the quoted argument of -c is command text and is judged|2|block-worktree-refresh: refused=refresh|bash -c "kendex refresh"
 the quoted argument of eval is command text too|2|block-worktree-refresh: refused=apply|eval "kendex apply"
@@ -468,7 +485,7 @@ an expansion before --project-path may be --, so no target is named|2|block-work
 an expansion after --project-path leaves the target named|0|-|kendex refresh --project-path /elsewhere \0044X
 a backslash leaves the words unsure, so no global scope is read|2|block-worktree-refresh: refused=add|kendex add --global ./a\\ b
 a > behind a quote may be quoted, so the word is unsure|2|block-worktree-refresh: refused=remove|kendex remove "a>b" --global
-a --scope whose value the segment does not hold is not the global scope|2|block-worktree-refresh: refused=refresh|kendex refresh --global --scope "global"
+a quoted global scope value reaches kendex as the global scope|0|-|kendex refresh --global --scope "global"
 a target the shell expands when it runs is unproven, spelled with an equals sign|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path=\0044PWD -y
 and spelled as the next word|2|block-worktree-refresh: unproven=apply|kendex apply --project-path \0044PWD
 a target a command substitution prints is cut out of the words, so it is unproven|2|block-worktree-refresh: unproven=refresh|kendex refresh --project-path "\0044(pwd)"
@@ -527,7 +544,7 @@ a single-quoted target spelled with an equals sign is still a target|payload|own
 and double-quoted|payload|own|2|block-worktree-refresh: shared=apply|kendex apply "--project-path=$MAIN"
 and on updates --apply|payload|own|2|block-worktree-refresh: shared=updates|kendex updates --apply '--project-path=$MAIN'
 a quoted target naming the worktree's own project passes|payload|own|0|-|kendex apply "--project-path=$OWN"
-a quoted span after refresh is cut from the words as command text, so whatever target it holds is unproven|payload|own|2|block-worktree-refresh: unproven=refresh|kendex refresh "--project-path=$OWN"
+a quoted target option naming the worktree's own project is judged and passes|payload|own|0|-|kendex refresh "--project-path=$OWN"
 a double-quoted target the shell expands is a target, and unproven|payload|own|2|block-worktree-refresh: unproven=apply|MAIN=$MAIN; kendex apply "--project-path=\$MAIN"
 and on updates --apply|payload|own|2|block-worktree-refresh: unproven=updates|MAIN=$MAIN; kendex updates --apply "--project-path=\$MAIN"
 an expansion that may be --project-path proves no target in a worktree that owns its manifest|payload|own|2|block-worktree-refresh: unproven=apply|FLAG=--project-path; MAIN=$MAIN; kendex apply "\$FLAG" "\$MAIN"
@@ -780,6 +797,62 @@ done <<ROWS
 a global Pi install four directories under the home finds the reader in the home's shared tree|$HOME/.pi/agent/kendex/hooks
 a harness root relocated out of the home finds the reader in the home's shared tree|$TMP_ROOT/relocated/codex/hooks
 ROWS
+
+echo "=== block-worktree-refresh: command classification controls ==="
+# Each copy keeps the real executable and verb text. Removing the executable
+# check must refuse an argument; removing command detection must allow a real
+# write; treating script names as shells must refuse a title. The same table
+# assertions run against each planted copy and must report failure.
+CONTROL_LIBRARY="$(cd "$TEST_DIR/../.." && pwd)/skills/commit-guards/scripts/lib/command-position.sh"
+control() { # DEFECT -> rerun command_table against a disposable install
+  local defect=$1 at="$TMP_ROOT/control-$1" original_hook=$HOOK original_rows=$COMMAND_ROWS
+  local saved_pass=$PASS saved_fail=$FAIL status=0
+  mkdir -p "$at/hooks" "$at/skills/commit-guards/scripts/lib"
+  cp "$HOOK" "$at/hooks/block-worktree-refresh.sh"
+  cp "$CONTROL_LIBRARY" "$at/skills/commit-guards/scripts/lib/command-position.sh"
+  case "$defect" in
+    argument)
+      awk '
+        /\[\[ \$COMMAND_TEXTS =~ \^/ { sub(/=~ \^/, "=~ "); count++ }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$HOOK" >"$at/hooks/block-worktree-refresh.sh"
+      COMMAND_ROWS="a kendex argument is data|0|-|printf '%s %s' kendex refresh"
+      ;;
+    executable)
+      awk '
+        /^  command_text "\$1"$/ { print; print "  COMMAND_TEXTS=\"\""; count++; next }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$HOOK" >"$at/hooks/block-worktree-refresh.sh"
+      COMMAND_ROWS='a real kendex write is refused|2|block-worktree-refresh: refused=refresh|env FOO=1 command kendex refresh'
+      ;;
+    shell)
+      awk '
+        /^  \[\[ \$word =~ \$SHELL_RE \]\] \|\| return 1$/ {
+          print "  [[ $word == *sh ]]"; print "  return"; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
+      COMMAND_ROWS="a GitHub script title is data|0|-|github.sh pr-create --title 'kendex refresh'"
+      ;;
+    *) printf 'control: unknown defect=%s\n' "$defect" >&2; exit 2 ;;
+  esac
+  HOOK="$at/hooks/block-worktree-refresh.sh"
+  PASS=0
+  FAIL=0
+  command_table >"$at/result" || status=$?
+  [ "$FAIL" -ne 0 ] || status=1
+  HOOK=$original_hook
+  COMMAND_ROWS=$original_rows
+  PASS=$saved_pass
+  FAIL=$saved_fail
+  assert_eq "$status" 0 "the $defect defect turns its command assertion red"
+}
+control argument
+control executable
+control shell
 
 echo
 echo "block-worktree-refresh: $PASS passed, $FAIL failed"

@@ -17,9 +17,9 @@
 # substitution that cannot be paired leaves the whole text to be cut unmasked,
 # so a command the reader could not take apart is read with its full reach.
 #
-# `command_text SEGMENT` leaves COMMAND_TEXTS holding, one per line, that
-# segment from each word the shell may execute, for a caller judging what a
-# command is rather than what it mentions.
+# `command_text SEGMENT` leaves COMMAND_TEXTS holding the segment from its
+# executable word, after assignments and launching prefixes. Arguments of
+# another executable do not become commands.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
 # and COMMAND_TEXTS, so a caller does not use those names for its own state.
@@ -41,13 +41,9 @@ uncommented() { # LINE -> BARE, the line without its comment
     *) BARE=$1 ;;
   esac
 }
-# The one test of whether text the shell reads out of a quoted span or out of a
-# heredoc body is a command: a word before it in the same segment runs shell
-# text. That is a word whose basename ends in `sh` (`sh`, `bash`, `zsh`,
-# `dash`, `ksh`), or the word `eval`, `source` or `.`. It also reads an English
-# word ending in `sh`, such as `push`, as one; that keeps the span as command
-# text rather than masking it, which is the direction a guard fails in.
-SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:space:]]|$)'
+# GitHub and Linear script arguments are data even when the script name
+# ends in `sh`. Only an interpreter in executable position runs shell text.
+SHELL_RE='^(sh|bash|dash|ash|zsh|ksh|fish)$'
 # A word standing immediately after a redirection operator is a file the shell
 # opens, never the command it runs, so `cat > script.sh` names no shell. The
 # operator takes an optional file descriptor digit in front of it.
@@ -56,12 +52,35 @@ REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
 # `"/bin/bash" -c ...`, and a quoted word ends in the quote character, so the
 # basename would never read as a shell. The redirection targets go next, since
 # a target named for a script would otherwise read as the interpreter of one.
-runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
-  local bare=${1//[\'\"]/}
+runs_shell_text() { # TEXT [stdin] -> 0 when its executable runs shell text
+  local bare=${1//[\'\"]/} word raw rest mode=${2:-span} operand=""
+  case "$bare" in *\<\<\<*) mode=stdin ;; esac
   while [[ $bare =~ $REDIRECT_RE ]]; do
     bare=${bare/"${BASH_REMATCH[0]}"/ }
   done
-  [[ $bare =~ $SHELL_RE ]]
+  command_text "$bare" shell
+  word=${COMMAND_TEXTS%%[[:space:]]*}
+  rest=${COMMAND_TEXTS#"$word"}
+  word=${word##*/}
+  case "$word" in eval | source | .) return 0 ;; esac
+  [[ $word =~ $SHELL_RE ]] || return 1
+  while :; do
+    rest=${rest#"${rest%%[![:space:]]*}"}
+    [ -n "$rest" ] || { [ "$mode" = stdin ]; return; }
+    raw=${rest%%[[:space:]]*}
+    rest=${rest#"$raw"}
+    if [ -n "$operand" ]; then
+      operand=""
+      continue
+    fi
+    case "$raw" in
+      --rcfile | --init-file) operand=1 ;;
+      --*) ;;
+      -*c*) [ -z "${rest//[[:space:]]/}" ]; return ;;
+      -*) ;;
+      *) return 1 ;;
+    esac
+  done
 }
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc
 # delimiter, a word the shell does not run. `<<<` is a here-string, and the
@@ -158,9 +177,8 @@ SEP='[&;|()`'$NL']'
 # it arms no heredoc; and the separators, so a `(` or a `;` written in it
 # neither opens a command position for the next span nor cuts the segment.
 SPAN_MASK='[[:space:]<&;|()`]'
-# The one judge of what the shell would not run, masking only that and leaving
-# a caller's patterns their whole-text reach over everything else, so there is
-# no list of words that may precede a command to be incomplete.
+# Quotes preserve data arguments as one word. Only text supplied to a shell
+# interpreter, eval, source or dot opens a command position.
 #
 # Each quoted span keeps its quotes, since a command word may be quoted whole
 # (`"/path/kendex" refresh`), while the characters SPAN_MASK names inside it
@@ -248,7 +266,7 @@ EOF
       end=$((end + 1))
     done
     [ "$end" -lt "$count" ] || continue
-    if runs_shell_text "$BARE"; then
+    if runs_shell_text "$BARE" stdin; then
       while [ "$index" -lt "$end" ]; do
         judged=$judged${lines[$index]}$NL
         index=$((index + 1))
@@ -289,39 +307,58 @@ $cut
 EOF
   SEGMENTS=$out
 }
-# The parts of one segment the shell may execute, each from a word on to the
-# segment's end. Leading `NAME=value` words are assignments the shell makes for
-# the command, not the command, so each is stepped over; a quoted value was
-# masked to one word by command_segments. What the executable word runs is not
-# always that word: `bash` runs a script among the words after it, and a
-# launcher such as `env` or `xargs` runs a word of its own. Which word depends
-# on options that may take the next word as their value, and a launcher may
-# launch another, so no option is read and no launcher is listed: the
-# executable word starts a text, and so does every word after it. A word that
-# only stands as an argument is judged as a command too, which is the direction
-# a guard fails in. A quote around a word stays, as the caller's pattern may
-# allow one. COMMAND_TEXTS is empty when the segment executes nothing.
+# The executable of a simple command. Assignments and redirections are the
+# shell's, and launching prefixes consume their own options before the child
+# executable. In particular an option value named `kendex` is never that
+# child. These prefixes occur in tool commands judged by block-worktree-refresh;
+# an ordinary executable's remaining words stay arguments.
 command_text() { # SEGMENT -> COMMAND_TEXTS
-  local rest=$1 word name
-  while :; do
-    rest=${rest#"${rest%%[![:space:]]*}"}
-    word=${rest%%[[:space:]]*}
-    case "$word" in
-      [[:alpha:]_]*=*) ;;
-      *) break ;;
-    esac
-    name=${word%%=*}
-    case "$name" in
-      *[![:alnum:]_]*) break ;;
-    esac
-    rest=${rest#"$word"}
-  done
+  local rest=$1 word raw name launcher="" operand="" options=1
   COMMAND_TEXTS=""
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
     [ -n "$rest" ] || return 0
-    COMMAND_TEXTS=$COMMAND_TEXTS$rest$NL
     word=${rest%%[[:space:]]*}
-    rest=${rest#"$word"}
+    raw=$word
+    word=${word//[\'\"]/}
+    if [ -n "$operand" ]; then
+      operand=""
+    elif [[ $word =~ ^[0-9]*[\<\>] ]]; then
+      [[ $word =~ ^[0-9]*[\<\>]+$ ]] && operand=1
+    elif [ -n "$launcher" ] && [ -n "$options" ] && [ "$word" = -- ]; then
+      options=""
+    elif [ -n "$launcher" ] && [ -n "$options" ] && [[ $word == -* ]]; then
+      case "$launcher:$word" in
+        command:-*[vV]*) return 0 ;;
+        env:--unset | env:--chdir | env:-*[uC] | sudo:--user | sudo:--group | sudo:--host | sudo:--prompt | sudo:--chdir | sudo:--chroot | sudo:--role | sudo:--type | sudo:--other-user | sudo:--close-from | sudo:-*[ughpDRrtUC] | timeout:--signal | timeout:--kill-after | timeout:-[sk]) operand=1 ;;
+      esac
+    elif [ "$launcher" = timeout ]; then
+      # timeout's duration precedes the child command.
+      launcher=""
+      options=1
+    elif [[ $word =~ ^[[:alpha:]_][[:alnum:]_]*= ]] && { [ -z "$launcher" ] || [ "$launcher" = env ]; }; then
+      :
+    else
+      name=${word##*/}
+      case "$name" in
+        env | command | sudo | timeout)
+          launcher=$name
+          options=1
+          ;;
+        eval)
+          if [ "${2:-}" = shell ]; then
+            COMMAND_TEXTS=$rest
+            return 0
+          fi
+          launcher=""
+          options=1
+          ;;
+        *)
+          COMMAND_TEXTS=$rest
+          return 0
+          ;;
+      esac
+    fi
+    rest=${rest#"$raw"}
   done
 }

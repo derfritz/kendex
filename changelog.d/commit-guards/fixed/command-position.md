@@ -1,0 +1,1 @@
+- The shared command reader identifies the executable after assignments and launch prefixes. Script names that end in sh no longer cause quoted arguments to be read as shell commands.
