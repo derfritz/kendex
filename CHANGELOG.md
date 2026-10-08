@@ -64,6 +64,7 @@ Each change lands as a fragment under `changelog.d/`, per [changelog.d/README.md
 - Hosted mailbox reads reuse SSH connections and skip repeated host probes for absent files.
 - Keep merged work with open post-merge checks on the same Linear item in Verifying. The watch lists each check and deadline, raises overdue events, and reconciliation reports overdue or empty verification.
 - SSH lane creation keeps the clone's private environment file absent during dependency installation and restores it when the install succeeds or fails.
+- CI validation respects the repository selector before it skips local checks. The selector receives the current fix round's changed files and base.
 
 #### preflight
 

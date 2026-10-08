@@ -1,1 +1,0 @@
-- CI validation respects the repository selector before it skips local checks. The selector receives the current fix round's changed files and base.
