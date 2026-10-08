@@ -1,1 +1,1 @@
-- The shared command reader identifies the executable after assignments and launch prefixes. Script names that end in sh no longer cause quoted arguments to be read as shell commands.
+- The shared command reader identifies executables after assignments, launch prefixes and shell control words. Shell stdin mode preserves commands when positional arguments follow. Script names that end in sh no longer cause quoted arguments to be read as shell commands.

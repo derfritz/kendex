@@ -222,8 +222,7 @@ mkdir -p "$MALFORMED/.git" "$MALFORMED/sub"
 # The command is the last field, so read keeps literal pipes in it. printf %b
 # decodes the newline and backslash-newline fixtures without splitting rows,
 # and the octal escapes `\0044`, `\0074` and `\0140` write the dollar sign, the
-# less-than and the backtick a row needs: written literally inside this command
-# substitution, tools/bash32-parse cannot follow the file to its end.
+# less-than and the backtick a row needs.
 command_table() {
   local row label expected first command field got before=$((PASS + FAIL))
   echo "=== block-worktree-refresh: command forms from the linked worktree ==="
@@ -303,7 +302,9 @@ directory_table() {
 # The scope, target and apply options are the words Bash passes: a
 # redirection's file is not one, a standalone `--` ends them, and a word the
 # shell settles only when it runs grants nothing and counts as `--apply`.
-COMMAND_ROWS=$(cat <<'ROWS'
+# Bash 3.2 counts quotes and parentheses inside a substitution's heredoc.
+# Read the table directly so its shell fixtures remain literal data.
+IFS= read -r -d '' COMMAND_ROWS <<'ROWS' || :
 kendex refresh from the worktree is refused|2|block-worktree-refresh: refused=refresh|kendex refresh
 kendex apply from the worktree is refused|2|block-worktree-refresh: refused=apply|kendex apply
 kendex add orch from the worktree is refused|2|block-worktree-refresh: refused=add|kendex add orch
@@ -441,6 +442,40 @@ an unquoted eval before the verb does not hide it either|2|block-worktree-refres
 nor does a wrapper word the hook was never told about|2|block-worktree-refresh: refused=refresh|timeout 60 kendex refresh
 a here-string fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<< "kendex refresh"
 a heredoc body fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<EOF\nkendex refresh\nEOF
+a shell in stdin mode takes positional arguments without hiding its commands|2|block-worktree-refresh: refused=refresh|bash -s -- ARG \0074\0074'EOF'\nkendex refresh\nEOF
+stdin mode works without an option terminator|2|block-worktree-refresh: refused=refresh|bash -s ARG \0074\0074'EOF'\nkendex refresh\nEOF
+clustered shell options retain stdin mode|2|block-worktree-refresh: refused=refresh|bash -es -- ARG \0074\0074'EOF'\nkendex refresh\nEOF
+a shell option operand is not a script filename|2|block-worktree-refresh: refused=refresh|bash -o errexit -O extglob -s -- ARG \0074\0074'EOF'\nkendex refresh\nEOF
+stdin mode in a cluster with an option operand retains commands|2|block-worktree-refresh: refused=refresh|bash -esO extglob -- ARG \0074\0074'EOF'\nkendex refresh\nEOF
+stdin mode behind launch and control words retains the command body|2|block-worktree-refresh: refused=refresh|if ! env -i bash -s -- ARG \0074\0074'EOF'\nkendex refresh\nEOF\nthen :; fi
+a shell script filename keeps the heredoc as data|0|-|bash -- script.sh \0074\0074'EOF'\nkendex refresh\nEOF
+disabling stdin mode restores a script filename|0|-|bash -s +s script.sh \0074\0074'EOF'\nkendex refresh\nEOF
+stdin positional arguments do not become quoted command text|0|-|bash -s -- 'kendex refresh' \0074\0074'EOF'\n:\nEOF
+command mode executes its argument instead of the heredoc|0|-|bash -sc ':' -- ARG \0074\0074'EOF'\nkendex refresh\nEOF
+command mode still judges its real command when stdin mode is also set|2|block-worktree-refresh: refused=refresh|bash -sc 'kendex refresh' -- ARG
+a write in an if condition is judged|2|block-worktree-refresh: refused=refresh|if kendex refresh; then :; fi
+a write after then is judged|2|block-worktree-refresh: refused=refresh|if true; then kendex refresh; fi
+a write after elif is judged|2|block-worktree-refresh: refused=refresh|if false; then :; elif kendex refresh; then :; fi
+a write after else is judged|2|block-worktree-refresh: refused=refresh|if false; then :; else kendex refresh; fi
+a write in a while condition is judged|2|block-worktree-refresh: refused=refresh|while kendex refresh; do :; done
+a write in an until condition is judged|2|block-worktree-refresh: refused=refresh|until kendex refresh; do :; done
+a write after do is judged|2|block-worktree-refresh: refused=refresh|for item in x; do kendex refresh; done
+a negated write is judged|2|block-worktree-refresh: refused=refresh|! kendex refresh
+a timed write is judged|2|block-worktree-refresh: refused=refresh|time -p kendex refresh
+a timed negated write is judged|2|block-worktree-refresh: refused=refresh|time ! kendex refresh
+a write in a brace group is judged|2|block-worktree-refresh: refused=refresh|{ kendex refresh; }
+a write in a function body is judged|2|block-worktree-refresh: refused=refresh|refresh_project() { kendex refresh; }
+a write in a coprocess is judged|2|block-worktree-refresh: refused=refresh|co\0160roc kendex refresh
+exec runs its child command|2|block-worktree-refresh: refused=refresh|exec kendex refresh
+exec's process name operand is not its child|2|block-worktree-refresh: refused=refresh|exec -a NAME kendex refresh
+exec's clustered process name option retains its child|2|block-worktree-refresh: refused=refresh|exec -cla NAME kendex refresh
+exec options and an option terminator preserve its child|2|block-worktree-refresh: refused=refresh|exec -cl -- kendex refresh
+exec's process name can name kendex without running it|0|-|exec -a kendex printf '%s' refresh
+a quoted control word remains an executable name|0|-|"if" kendex refresh
+a quoted control word keeps shell-looking arguments as data|0|-|"if" bash -c 'kendex refresh'
+a path that ends in a control word remains an executable name|0|-|/bin/while kendex refresh
+a control word as an argument does not introduce a command|0|-|printf '%s' then kendex refresh
+global scope still passes after control words|0|-|if kendex refresh --global; then :; fi
 a redirection target is a file, not the interpreter of one|0|-|cat > script.sh <<EOF\nkendex refresh\nEOF
 a marker only written down arms no heredoc, so the next line is still read|2|block-worktree-refresh: refused=refresh|echo '<<EOF'\nkendex refresh
 a quoted interpreter path still runs what it is given|2|block-worktree-refresh: refused=refresh|"/bin/bash" -c "kendex refresh"
@@ -496,7 +531,6 @@ an expansion before --project-path= may be --, so no target is named|2|block-wor
 --scope project before --scope global keeps it|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project --scope global
 --scope project before --scope=global keeps it|2|block-worktree-refresh: refused=refresh|kendex refresh --scope project --scope=global
 ROWS
-)
 command_table
 
 # label|cwd source|world|status|first line|command
@@ -837,6 +871,46 @@ control() { # DEFECT -> rerun command_table against a disposable install
       ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
       COMMAND_ROWS="a GitHub script title is data|0|-|github.sh pr-create --title 'kendex refresh'"
       ;;
+    stdin)
+      awk '
+        /-\*s\*\) stdin=1/ { sub(/stdin=1/, "stdin=\"\""); count++ }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
+      COMMAND_ROWS="a stdin shell with positional arguments still runs its body|2|block-worktree-refresh: refused=refresh|bash -s -- ARG \0074\0074'EOF'\nkendex refresh\nEOF"
+      ;;
+    keyword)
+      awk '
+        /elif.*raw.*word.*launcher.*until/ { print "    elif false; then"; count++; next }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
+      COMMAND_ROWS='a conditional write is judged|2|block-worktree-refresh: refused=refresh|if kendex refresh; then :; fi'
+      ;;
+    quoted-keyword)
+      awk '
+        /local bare=\$1 word/ { print; print "  bare=${bare//\\\"/}"; count++; next }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
+      COMMAND_ROWS="a quoted control word keeps shell arguments as data|0|-|\"if\" bash -c 'kendex refresh'"
+      ;;
+    time)
+      awk '
+        /elif.*raw.*time.*launcher/ { print "    elif false; then"; count++; next }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
+      COMMAND_ROWS='a timed write is judged|2|block-worktree-refresh: refused=refresh|time -p kendex refresh'
+      ;;
+    exec)
+      awk '
+        /env \| command \| sudo \| timeout \| exec\)/ { sub(/ \| exec/, ""); count++ }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
+      COMMAND_ROWS='an exec write is judged|2|block-worktree-refresh: refused=refresh|exec -a NAME kendex refresh'
+      ;;
     *) printf 'control: unknown defect=%s\n' "$defect" >&2; exit 2 ;;
   esac
   HOOK="$at/hooks/block-worktree-refresh.sh"
@@ -853,6 +927,11 @@ control() { # DEFECT -> rerun command_table against a disposable install
 control argument
 control executable
 control shell
+control stdin
+control keyword
+control quoted-keyword
+control time
+control exec
 
 echo
 echo "block-worktree-refresh: $PASS passed, $FAIL failed"

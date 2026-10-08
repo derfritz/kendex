@@ -18,7 +18,7 @@
 # so a command the reader could not take apart is read with its full reach.
 #
 # `command_text SEGMENT` leaves COMMAND_TEXTS holding the segment from its
-# executable word, after assignments and launching prefixes. Arguments of
+# executable word, after control words, assignments and launching prefixes. Arguments of
 # another executable do not become commands.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
@@ -48,12 +48,11 @@ SHELL_RE='^(sh|bash|dash|ash|zsh|ksh|fish)$'
 # opens, never the command it runs, so `cat > script.sh` names no shell. The
 # operator takes an optional file descriptor digit in front of it.
 REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
-# The quotes come off the text first: a command word may be quoted whole, as in
-# `"/bin/bash" -c ...`, and a quoted word ends in the quote character, so the
-# basename would never read as a shell. The redirection targets go next, since
-# a target named for a script would otherwise read as the interpreter of one.
+# Keep quotes until executable selection: a quoted control word is a command
+# name. Strip them from the selected name so `"/bin/bash"` still names a shell.
+# Redirection targets never name an interpreter.
 runs_shell_text() { # TEXT [stdin] -> 0 when its executable runs shell text
-  local bare=${1//[\'\"]/} word raw rest mode=${2:-span} operand=""
+  local bare=$1 word raw rest mode=${2:-span} operand="" options=1 stdin=""
   case "$bare" in *\<\<\<*) mode=stdin ;; esac
   while [[ $bare =~ $REDIRECT_RE ]]; do
     bare=${bare/"${BASH_REMATCH[0]}"/ }
@@ -61,6 +60,7 @@ runs_shell_text() { # TEXT [stdin] -> 0 when its executable runs shell text
   command_text "$bare" shell
   word=${COMMAND_TEXTS%%[[:space:]]*}
   rest=${COMMAND_TEXTS#"$word"}
+  word=${word//[\'\"]/}
   word=${word##*/}
   case "$word" in eval | source | .) return 0 ;; esac
   [[ $word =~ $SHELL_RE ]] || return 1
@@ -69,17 +69,33 @@ runs_shell_text() { # TEXT [stdin] -> 0 when its executable runs shell text
     [ -n "$rest" ] || { [ "$mode" = stdin ]; return; }
     raw=${rest%%[[:space:]]*}
     rest=${rest#"$raw"}
+    raw=${raw//[\'\"]/}
     if [ -n "$operand" ]; then
       operand=""
       continue
     fi
     case "$raw" in
+      --*) ;;
+      -*s*) stdin=1 ;;
+      +*s*) stdin="" ;;
+    esac
+    case "$raw" in
+      -- | -) options="" ;;
       --rcfile | --init-file) operand=1 ;;
       --*) ;;
       -*c*) [ -z "${rest//[[:space:]]/}" ]; return ;;
-      -*) ;;
-      *) return 1 ;;
+      [-+]*[oO]) operand=1 ;;
+      [-+]*) ;;
+      *) [ -n "$stdin" ] && [ "$mode" = stdin ]; return ;;
     esac
+    if [ -z "$options" ]; then
+      if [ -n "$stdin" ]; then
+        [ "$mode" = stdin ]
+      else
+        [ "$mode" = stdin ] && [ -z "${rest//[[:space:]]/}" ]
+      fi
+      return
+    fi
   done
 }
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc
@@ -309,8 +325,9 @@ EOF
 }
 # The executable of a simple command. Assignments and redirections are the
 # shell's, and launching prefixes consume their own options before the child
-# executable. In particular an option value named `kendex` is never that
-# child. These prefixes occur in tool commands judged by block-worktree-refresh;
+# executable. Shell control words also introduce a command, but only when
+# unquoted and without a path. An option value named `kendex` is never that child.
+# These prefixes occur in tool commands judged by block-worktree-refresh;
 # an ordinary executable's remaining words stay arguments.
 command_text() { # SEGMENT -> COMMAND_TEXTS
   local rest=$1 word raw name launcher="" operand="" options=1
@@ -330,18 +347,27 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
     elif [ -n "$launcher" ] && [ -n "$options" ] && [[ $word == -* ]]; then
       case "$launcher:$word" in
         command:-*[vV]*) return 0 ;;
-        env:--unset | env:--chdir | env:-*[uC] | sudo:--user | sudo:--group | sudo:--host | sudo:--prompt | sudo:--chdir | sudo:--chroot | sudo:--role | sudo:--type | sudo:--other-user | sudo:--close-from | sudo:-*[ughpDRrtUC] | timeout:--signal | timeout:--kill-after | timeout:-[sk]) operand=1 ;;
+        env:--unset | env:--chdir | env:-*[uC] | sudo:--user | sudo:--group | sudo:--host | sudo:--prompt | sudo:--chdir | sudo:--chroot | sudo:--role | sudo:--type | sudo:--other-user | sudo:--close-from | sudo:-*[ughpDRrtUC] | timeout:--signal | timeout:--kill-after | timeout:-[sk] | exec:-*a) operand=1 ;;
       esac
     elif [ "$launcher" = timeout ]; then
       # timeout's duration precedes the child command.
       launcher=""
       options=1
+    elif [ "$launcher" = time ]; then
+      launcher=""
+      options=1
+      continue
     elif [[ $word =~ ^[[:alpha:]_][[:alnum:]_]*= ]] && { [ -z "$launcher" ] || [ "$launcher" = env ]; }; then
       :
+    elif [ "$raw" = "$word" ] && [ -z "$launcher" ] && [[ $word =~ ^(if|elif|then|else|while|until|do|!|\{|co[p]roc)$ ]]; then
+      :
+    elif [ "$raw" = time ] && [ -z "$launcher" ]; then
+      launcher=time
+      options=1
     else
       name=${word##*/}
       case "$name" in
-        env | command | sudo | timeout)
+        env | command | sudo | timeout | exec)
           launcher=$name
           options=1
           ;;
