@@ -358,15 +358,15 @@ cut_segments() { # TEXT [UNMODELED-CAUSE] -> append command answers
   elif mask_spans "$text" boundaries; then
     cut=$MASKED
     original=$UNMASKED
-    # Descriptor duplication's ampersand belongs to this command. Keep it
-    # until the command's model has been decided, rather than cutting it.
-    cut=${cut//>\&/>$MASK}
-    cut=${cut//<\&/<$MASK}
   else
     cause=unpaired-text
     cut=$text
     original=$text
   fi
+  # Descriptor duplication's ampersand belongs to this command, including
+  # raw fallback commands with the redirection between executable and verb.
+  cut=${cut//>\&/>$MASK}
+  cut=${cut//<\&/<$MASK}
   cut=${cut//;/$NL}
   cut=${cut//&/$NL}
   cut=${cut//\|/$NL}

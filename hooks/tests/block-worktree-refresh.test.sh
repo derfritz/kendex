@@ -555,6 +555,10 @@ eval with an option terminator falls back|2|block-worktree-refresh: unmodeled=re
 an output descriptor duplication falls back|2|block-worktree-refresh: unmodeled=refresh|2>&1 kendex refresh
 an input descriptor duplication falls back|2|block-worktree-refresh: unmodeled=refresh|2\0074&0 kendex refresh
 a descriptor close falls back|2|block-worktree-refresh: unmodeled=refresh|2>&- kendex refresh
+an output descriptor between executable and verb keeps the real write|2|block-worktree-refresh: unmodeled=refresh|kendex 2>&1 refresh
+an input descriptor between executable and verb keeps the real write|2|block-worktree-refresh: unmodeled=refresh|kendex 2\0074&0 refresh
+a descriptor between a group and its subcommand keeps the real write|2|block-worktree-refresh: unmodeled=source add|kendex source 2>&1 add x owner/repo
+a launcher with a descriptor between executable and verb proves no scope|2|block-worktree-refresh: unmodeled=refresh|nohup kendex 2>&1 refresh --global
 a heredoc piped to a shell falls back|2|block-worktree-refresh: unmodeled=refresh|cat \0074\0074'EOF' | bash\nkendex refresh\nEOF
 a heredoc passed to an unknown shell launcher stays raw|2|block-worktree-refresh: unmodeled=refresh|nohup bash \0074\0074'EOF'\nkendex refresh\nEOF
 a heredoc passed to an unknown shell launcher grants no scope exemption|2|block-worktree-refresh: unmodeled=refresh|nohup bash \0074\0074'EOF'\nkendex refresh --global\nEOF
@@ -1047,6 +1051,14 @@ control() { # DEFECT -> rerun command_table against a disposable install
       ' "$HOOK" >"$at/hooks/block-worktree-refresh.sh"
       COMMAND_ROWS='a descriptor failure is reported as an unsupported form|2|block-worktree-refresh: unmodeled=refresh|kendex refresh --global 2>&1'
       ;;
+    descriptor-boundary)
+      awk '
+        /^  cut=\$\{cut\/\/>/ { print "  :"; count++; next }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CONTROL_LIBRARY" >"$at/skills/commit-guards/scripts/lib/command-position.sh"
+      COMMAND_ROWS='a descriptor does not cut the executable from its verb|2|block-worktree-refresh: unmodeled=refresh|kendex 2>&1 refresh'
+      ;;
     exemption)
       awk '
         /^        unmodeled_write "\$SEGMENT"$/ {
@@ -1098,6 +1110,7 @@ control data-contract
 control neighbor-contract
 control boundaries
 control unsupported-cause
+control descriptor-boundary
 control exemption
 control earlier-read
 
