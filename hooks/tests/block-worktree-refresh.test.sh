@@ -983,6 +983,7 @@ compatibility_table() { # CURRENT-HOOK CURRENT-READER -> fixed mixed-pair assert
   while IFS='|' read -r pair label world expected first command; do
     [ -n "$label" ] || continue
     command=$(printf '%b' "$command")
+    command=${command//OWN_TARGET/$OWN}
     case "$world" in
       worktree) dir="$WT" ;;
       main) dir="$MAIN" ;;
@@ -1011,6 +1012,30 @@ published|published hook retains data heredocs with a current global reader|work
 published|published hook opens shell input behind unknown launchers|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh' dummy --global
 published|published hook opens shell input after unsupported shell options|worktree|2|block-worktree-refresh: refused=refresh|bash -c -- 'kendex refresh' dummy --help
 published|published hook masks earlier assignment data before a later real write|worktree|2|block-worktree-refresh: refused=refresh|FOO="kendex help" nohup kendex refresh
+published|quoted comments keep outer global options outside shell input|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text' dummy --global
+published|double-quoted comments keep outer help outside shell input|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c "kendex refresh # text" dummy --help
+published|quoted comments keep an outer owned target outside shell input|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text' dummy --project-path OWN_TARGET
+published|quoted comments keep outer scope values outside shell input|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text' dummy --scope global
+published|quoted comments keep outer check options outside shell input|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text' dummy --check
+published|quoted comments keep outer preview options outside shell input|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text' dummy --dry-run
+published|an earlier help command cannot hide a commented write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex help; kendex refresh # text' dummy --global
+published|an earlier read cannot hide a commented write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex verify; kendex refresh # text' dummy --global
+published|earlier data cannot hide a commented write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'printf kendex; kendex refresh # text' dummy --global
+published|a later read cannot lend scope to an earlier write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh; kendex verify --global'
+published|a later read cannot lend help to an earlier write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh; kendex verify --help'
+published|a later read cannot lend an owned target to an earlier write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh; kendex verify --project-path OWN_TARGET'
+published|shell separators preserve a later write after help|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex help; kendex refresh'
+published|shell conjunctions preserve a later commented write after a read|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex verify && kendex refresh # text' dummy --help
+published|quoted assignment data cannot hide a commented shell write|worktree|2|block-worktree-refresh: refused=refresh|FOO="kendex help" nohup bash -c 'kendex refresh # text' dummy --global
+published|title data retains quoted comments|worktree|0|-|gh pr create --title 'kendex refresh # text'
+published|commit data retains quoted comments|worktree|0|-|git commit -m 'kendex refresh # text'
+published|heredoc data retains quoted comments|worktree|0|-|cat \0074\0074'EOF'\nkendex refresh # text\nEOF
+published|a quoted commented read remains a read|worktree|0|-|nohup bash -c 'kendex verify # text' dummy --global
+published|global scope within shell input still exempts its write|worktree|0|-|nohup bash -c 'kendex refresh --global # text' dummy --help
+published|a later input line cannot lend scope to a commented write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text\nkendex verify --global'
+published|an outer separator cannot hide a commented write|worktree|2|block-worktree-refresh: refused=refresh|nohup bash -c 'kendex refresh # text' dummy --global; kendex verify
+published|unsupported shell options retain quoted comment boundaries|worktree|2|block-worktree-refresh: refused=refresh|bash -c -- 'kendex refresh # text' dummy --global
+published|unsupported launcher options retain quoted comment boundaries|worktree|2|block-worktree-refresh: refused=refresh|sudo -H bash -c 'kendex refresh # text' dummy --global
 current|current project hook detects a published global reader before collecting writes|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex refresh
 current|current project hook detects a published reader before consuming read results|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex verify
 current|current project hook grants no scope exemption without the capability|worktree|2|block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh|kendex refresh --global
@@ -1044,7 +1069,7 @@ done <<'ROWS'
 kendex verify|modeled
 git status|unmodeled
 ROWS
-for defect in scalar-output scalar-projection published-candidates dependency-capability; do
+for defect in scalar-output scalar-projection projection-order published-candidates dependency-capability; do
   at="$TMP_ROOT/compatibility-control-$defect"
   mkdir -p "$at"
   cp "$HOOK" "$at/hook.sh"
@@ -1052,15 +1077,25 @@ for defect in scalar-output scalar-projection published-candidates dependency-ca
   case "$defect" in
     scalar-output)
       awk '
-        /^  SEGMENTS=""$/ || /^    SEGMENTS=\$SEGMENTS\$published\$NL$/ { print "  :"; count++; next }
+        /^  SEGMENTS=""$/ || /^[[:space:]]*SEGMENTS=\$SEGMENTS\$published\$NL$/ { print "  :"; count++; next }
         { print }
-        END { if (count != 2) exit 2 }
+        END { if (count != 3) exit 2 }
       ' "$CURRENT_LIBRARY" >"$at/reader.sh"
       ;;
     scalar-projection)
       awk '
         /^    if \[ "\$model" = unmodeled \]; then$/ {
           print "    if false; then"; count++; next
+        }
+        { print }
+        END { if (count != 1) exit 2 }
+      ' "$CURRENT_LIBRARY" >"$at/reader.sh"
+      ;;
+    projection-order)
+      awk '
+        /^    if mask_spans "\$text" published; then$/ {
+          print "    uncommented \"$text\""
+          print "    if mask_spans \"$BARE\" published; then"; count++; next
         }
         { print }
         END { if (count != 1) exit 2 }

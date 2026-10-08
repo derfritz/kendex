@@ -374,9 +374,17 @@ EOF
     index=$((index + 1))
   done
 }
-cut_segments() { # TEXT [UNMODELED-CAUSE] -> append command answers
-  local text=$1 cause=${2:-} cut original line raw masked model detail length executable published
-  if [ -n "$cause" ]; then
+cut_segments() { # TEXT [UNMODELED-CAUSE] [published] -> append command answers
+  local text=$1 cause=${2:-} projection=${3:-} cut original line raw masked model detail length executable published
+  if [ "$projection" = published ]; then
+    # Independent project hooks consume this scalar view. Open shell input
+    # before comments can remove its closing quote or join outer arguments.
+    if mask_spans "$text" published; then
+      cut=$MASKED
+    else
+      cut=$text
+    fi
+  elif [ -n "$cause" ]; then
     cut=$text
     original=$text
   elif mask_spans "$text" boundaries; then
@@ -398,6 +406,12 @@ cut_segments() { # TEXT [UNMODELED-CAUSE] -> append command answers
   cut=${cut//\)/$NL}
   cut=${cut//\`/$NL}
   while IFS= read -r line; do
+    if [ "$projection" = published ]; then
+      uncommented "$line"
+      published=$BARE
+      SEGMENTS=$SEGMENTS$published$NL
+      continue
+    fi
     length=${#line}
     raw=${original:0:length}
     original=${original:length+1}
@@ -442,10 +456,10 @@ cut_segments() { # TEXT [UNMODELED-CAUSE] -> append command answers
     if [ "$model" = unmodeled ]; then
       # Keep raw command-local fallback separate from the published view.
       # Published hooks need shell input opened and quoted arguments masked.
-      uncommented "$raw"
-      if mask_spans "$BARE" published; then published=$MASKED; fi
+      cut_segments "$raw" "" published
+    else
+      SEGMENTS=$SEGMENTS$published$NL
     fi
-    SEGMENTS=$SEGMENTS$published$NL
     SEGMENT_COMMANDS[${#SEGMENT_COMMANDS[@]}]=${executable:-}
     SEGMENT_TEXTS[${#SEGMENT_TEXTS[@]}]=$raw
     SEGMENT_MODELS[${#SEGMENT_MODELS[@]}]=$model
