@@ -1,0 +1,1 @@
+- Consumer refresh adoption refuses repository and organization Actions copies of its fixed credentials. Outside values cannot replace or complete the protected environment's pair, including credentials for optional upstream issue reporting.
