@@ -2,7 +2,7 @@
 # Inputs: block-worktree-refresh.sh and lib/first-line.sh.
 # The parsed CLI owns destination refusals. The catalog hook requires its
 # installed PATH command's fixed capability protocol before advisory output
-# or delegation of a baseline-recognized non-plain writer to the CLI.
+# or non-plain text naming kendex in a linked or uncertain checkout.
 # Only one plain bare call can advise. Other plain writer-word matches refuse.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -114,6 +114,11 @@ first_table "$DATA_ROWS"
 QUOTED_ROW='quoted writer belongs to guarded CLI|command|0|-|kendex "refresh"'
 first_table "$QUOTED_ROW"
 assert_eq "$(cat "$QUERY_LOG")" queried 'quoted writer asks trusted PATH capability'
+COMPOUND_QUOTED_ROW='help then quoted writer belongs to guarded CLI|command|0|-|kendex help && kendex "refresh"'
+first_table "$COMPOUND_QUOTED_ROW"
+assert_eq "$(cat "$QUERY_LOG")" queried 'help then quoted writer asks one trusted PATH capability'
+first_table "$VG_ROW"
+assert_eq "$(cat "$QUERY_LOG")" queried 'quoted title asks one trusted PATH capability'
 first_table 'plain refresh is an advisory|command|0|block-worktree-refresh: advisory=refresh|kendex refresh
 plain next command refuses|command|2|block-worktree-refresh: refused=refresh|git status && kendex refresh
 global refresh stays silent|command|0|-|kendex refresh --global
@@ -140,6 +145,8 @@ for mode in old failed empty unreadable wrong multiple stderr; do
   tar -cf "$TMP_ROOT/before.tar" -C "$TMP_ROOT" main linked home
   first_table "$mode capability refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex refresh"
   first_table "$mode quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\""
+  first_table "$mode help then quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex help && kendex \"refresh\""
+  assert_eq "$(cat "$QUERY_LOG")" queried "$mode compound refusal asks one trusted PATH capability"
   assert_eq "$(awk 'END {print NR}' "$ERR_FILE")" 1 "$mode refusal has one update line"
   [ ! -s "$OUT_FILE" ] && output=empty || output=present
   assert_eq "$output" empty "$mode refusal has no context"
@@ -147,15 +154,68 @@ for mode in old failed empty unreadable wrong multiple stderr; do
   if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
   assert_eq "$unchanged" yes "$mode refusal preserves complete fixture"
 done
-# Baseline writer words in data require the same capability on an older CLI.
+# Non-plain text naming kendex requires the same capability on an older CLI.
 export CAPABILITY_MODE=old
 silent='|command|0|-|'
 update="|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|"
 first_table "${DATA_ROWS//$silent/$update}"
 first_table 'older global stays silent|command|0|-|kendex refresh --scope global
 older read stays silent|command|0|-|kendex verify
-older preview stays silent|command|0|-|kendex apply --plan
-older quoted non-writer stays silent|command|0|-|printf "%s" "kendex verify"'
+older preview stays silent|command|0|-|kendex apply --plan'
+first_table "older quoted non-writer needs capability|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|printf \"%s\" \"kendex verify\""
+first_table 'non-plain text without kendex stays silent|command|0|-|printf "%s" "other text"'
+assert_eq "$(cat "$QUERY_LOG")" '' 'text without kendex has no query'
+
+# Both known checkout results bypass the compatibility query. The real Git
+# fixture proves these cases without deriving expected values from the hook.
+for directory in "$MAIN" "$HOME"; do
+  CURRENT_CWD=$directory
+  first_table "$QUOTED_ROW
+$COMPOUND_QUOTED_ROW
+$VG_ROW"
+  assert_eq "$(cat "$QUERY_LOG")" '' 'known main or non-repository has no query'
+done
+CURRENT_CWD=$WT
+
+# Reuse the installed-tool fixture for unavailable checkout identity. A failed
+# Git call and an unresolved Git path reach the existing probe's error owner.
+GIT_FAILURE_BIN="$TMP_ROOT/git-failure"
+NO_GIT_BIN="$TMP_ROOT/no-git"
+mkdir -p "$GIT_FAILURE_BIN" "$NO_GIT_BIN"
+cat >"$GIT_FAILURE_BIN/git" <<'GIT'
+#!/usr/bin/env bash
+case "$GIT_FAILURE_MODE" in
+  failed) printf 'fixture Git identity unavailable\n' >&2; exit 7 ;;
+  unresolved) printf '%s\n%s\n' "$TMP_PROBE_ROOT/no-git-dir" "$TMP_PROBE_ROOT/no-common-dir" ;;
+esac
+GIT
+chmod +x "$GIT_FAILURE_BIN/git"
+for tool in bash cat jq; do
+  tool_path=$(command -v "$tool")
+  ln -s "$tool_path" "$NO_GIT_BIN/$tool"
+done
+ln -s "$BIN/kendex" "$NO_GIT_BIN/kendex"
+export TMP_PROBE_ROOT=$TMP_ROOT
+probe_path=$PATH
+for probe_mode in missing failed unresolved; do
+  export GIT_FAILURE_MODE=$probe_mode
+  for mode in supported old failed unreadable; do
+    export CAPABILITY_MODE=$mode
+    if [ "$probe_mode" = missing ]; then PATH=$NO_GIT_BIN; else PATH="$GIT_FAILURE_BIN:$probe_path"; fi
+    run_hook 'kendex help && kendex "refresh"'
+    export PATH=$probe_path
+    if [ "$mode" = supported ]; then
+      want='rc=0 first=-'
+    else
+      if [ "$probe_mode" = missing ]; then trusted=$NO_GIT_BIN/kendex; else trusted=$BIN/kendex; fi
+      want="rc=2 first=block-worktree-refresh: cli-update-required=$trusted; route=update"
+    fi
+    assert_eq "rc=$rc first=$(first_line)" "$want" "$probe_mode Git with $mode capability"
+    assert_eq "$(cat "$QUERY_LOG")" queried "$probe_mode Git asks one trusted capability"
+    [ ! -s "$OUT_FILE" ] && output=empty || output=present
+    assert_eq "$output" empty "$probe_mode Git adds no context"
+  done
+done
 export CAPABILITY_MODE=supported
 REFUSED_ROWS="PATH export compound refuses|command|2|block-worktree-refresh: refused=refresh|export PATH=$OLD_BIN; kendex refresh
 PATH assignment refuses|command|2|block-worktree-refresh: refused=refresh|PATH=$OLD_BIN kendex refresh
@@ -223,7 +283,7 @@ for shape in object string; do
 done
 
 # Rerun the same assertions against copies with a planted defect.
-for defect in title advisory capability_old capability_failed capability_unreadable quoted_permissive quoted_word single_call baseline_word unapproved_launch; do
+for defect in title advisory capability_old capability_failed capability_unreadable quoted_permissive nonplain_uncertain nonplain_checkout single_call baseline_word unapproved_launch; do
   mutant="$TMP_ROOT/$defect.sh"
   rm -f "$UNAPPROVED_MARKER"
   case "$defect" in
@@ -238,13 +298,21 @@ for defect in title advisory capability_old capability_failed capability_unreada
       export CAPABILITY_MODE=${defect#capability_}
       rows="$CAPABILITY_MODE capability refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex refresh" ;;
     quoted_permissive)
-      awk '/^  \[ -z "\$FOUND" \] \|\| require_capability$/ {sub(/require_capability$/, ": require_capability"); n++} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      awk '/^if \[ "\$NONPLAIN" = yes \]; then$/ {gate=1} gate && /^  require_capability$/ {print "  : require_capability"; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       export CAPABILITY_MODE=old
-      rows="old quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\"" ;;
-    quoted_word)
-      awk '/^    word=\$\{word#\[/ {print "    : \"$word\""; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      rows="old quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\"
+old help then quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex help && kendex \"refresh\"" ;;
+    nonplain_uncertain)
+      awk '/^  if \[ "\$NONPLAIN" = yes \]; then$/ {gate=1} gate && /^    require_capability$/ {print "    : require_capability"; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       export CAPABILITY_MODE=old
-      rows="old quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\"" ;;
+      export GIT_FAILURE_MODE=failed
+      export PATH="$GIT_FAILURE_BIN:$probe_path"
+      rows="unknown checkout requires capability|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex help && kendex \"refresh\"" ;;
+    nonplain_checkout)
+      awk '/^\[ "\$GIT_DIR" != "\$COMMON_DIR" \] \|\| exit 0$/ {print ": \"$GIT_DIR\" != \"$COMMON_DIR\""; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      export CAPABILITY_MODE=old
+      CURRENT_CWD=$MAIN
+      rows=$QUOTED_ROW ;;
     single_call)
       awk '/^  \[ "\$SINGLE_CALL" = yes \]/ {sub(/\[ "\$SINGLE_CALL" = yes \]/, ": \"$SINGLE_CALL\" = yes"); n++} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       rows=$REFUSED_ROWS ;;
@@ -264,6 +332,8 @@ for defect in title advisory capability_old capability_failed capability_unreada
   fi
   failed=$FAIL
   HOOK=$original PASS=$saved_pass FAIL=$saved_fail
+  export PATH=$probe_path
+  CURRENT_CWD=$WT
   [ "$failed" -gt 0 ] && status=red || status=green
   assert_eq "$status" red "$defect defect turns its assertion red"
   export CAPABILITY_MODE=supported

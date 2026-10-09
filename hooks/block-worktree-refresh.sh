@@ -3,9 +3,9 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Report an early advisory for one plain bare project-writing kendex call from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. Other plain writer-word matches retain baseline refusals, including compound commands, prefixes and executable paths. Global, read and preview commands retain their plain classification. Outside the plain scan, baseline writer words require that same capability before passing silently, including quoted titles, messages and heredocs. Inputs with no baseline writer word pass silently. Missing capability, a failed query or an unreadable response refuses with the CLI update route.
-# summary: Requires installed CLI project-write protection before a plain bare worktree advisory or silent delegation of baseline-recognized quoted writer words. Other plain project writers refuse.
-# safety: Reads the hook payload and git checkout paths. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability for a single bare call or baseline writer words outside the plain scan; a supporting CLI answers before bootstrap writes. Never executes a proposed path. Other plain project-writer matches refuse without querying or advising. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, missing CLI capability and failed context output. A supported bare call retains unavailable advisories for a missing git or a failed git check.
+# description: Report an early advisory for one plain bare project-writing kendex call from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. Other plain writer-word matches retain baseline refusals, including compound commands, prefixes and executable paths. Global, read and preview commands retain their plain classification. Non-plain text containing kendex requires the same capability in a linked worktree or when Git cannot establish checkout identity; a supporting answer passes silently. Known main checkouts and non-repositories pass without a query. This backstop covers accidental quoted and compound forms, not deliberately hidden executable names. Missing capability, a failed query or an unreadable response refuses with the CLI update route.
+# summary: Requires installed CLI project-write protection before a plain bare worktree advisory or silent non-plain text naming kendex in a linked or unknown checkout. Other plain project writers refuse.
+# safety: Reads the hook payload and git checkout paths. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability for a single bare call, or non-plain text containing kendex in a linked or uncertain checkout; a supporting CLI answers before bootstrap writes. Never executes a proposed path or infers execution from quoted text. Other plain project-writer matches refuse without querying or advising. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, missing CLI capability and failed context output. A supported bare call retains unavailable advisories for a missing git or a failed git check.
 # timeout: 10
 # ---
 
@@ -19,6 +19,12 @@ refuse() {
 
 notice() { # KEY VALUE [CAUSE]
   local text context shape
+  # Uncertain checkout identity uses the same compatibility gate as a linked
+  # checkout. Non-plain input never receives the plain-call advisory.
+  if [ "$NONPLAIN" = yes ]; then
+    require_capability
+    exit 0
+  fi
   require_guard
   text="block-worktree-refresh: $1=$2
 The CLI checks the actual project destination before any write. Run from that checkout for a project change."
@@ -82,110 +88,54 @@ COMMAND=$(printf '%s' "$INPUT" | jq -r '
 
 KENDEX_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]|$)'
 
-# The baseline reader only gates delegation to the parsed CLI. It does
-# not establish what a quoted word or another shell form will execute.
-writing_verb() { # SEGMENT -> FOUND, TAIL
-  local rest word raw glued group="" lead="" value="" first=1
-  FOUND=""
-  TAIL=""
-  [[ $1 =~ $KENDEX_RE ]] || return 0
-  rest=${1#*"${BASH_REMATCH[0]}"}
-  while :; do
-    rest=${rest#"${rest%%[![:space:]]*}"}
-    [ -n "$rest" ] || return 0
-    word=${rest%%[[:space:]]*}
-    rest=${rest#"$word"}
-    raw=$word
-    # A redirection glued to the word, as in `refresh>/dev/null`, ends the
-    # word Bash passes; it stays in the tail for the option reader.
-    glued=${word#"${word%%[<>]*}"}
-    word=${word%%[<>]*}
-    word=${word#[\"\']}
-    word=${word%[\"\']}
-    if [ -n "$first" ]; then
-      first=""
-      [ "$word" != help ] || return 0
-    fi
-    if [ -n "$value" ]; then
-      value=""
-      lead="$lead $raw"
+NONPLAIN=no
+SINGLE_CALL=no
+WRITE=""
+PLAIN='^[[:alnum:]_./:@%=+,[:space:]&|;-]*$'
+# Text selection is a compatibility backstop for accidental quoted/compound
+# forms, not a claim about shell execution. The CLI guards parsed writes.
+if [[ ! $COMMAND =~ $PLAIN ]]; then
+  [[ $COMMAND == *kendex* ]] || exit 0
+  NONPLAIN=yes
+else
+  single='^[[:blank:]]*kendex([[:blank:]]+[[:alnum:]_./:@%=+,-]+)+[[:blank:]]*$'
+  [[ $COMMAND =~ $single ]] && SINGLE_CALL=yes
+  COMMAND=${COMMAND//;/$'\n'}
+  COMMAND=${COMMAND//&/$'\n'}
+  COMMAND=${COMMAND//|/$'\n'}
+  # Baseline writer-word matching has refusal-only reach beyond a bare call.
+  # It does not establish what a prefix or another command will execute.
+  while IFS= read -r segment; do
+    [[ $segment =~ $KENDEX_RE ]] || continue
+    tail=${segment#*"${BASH_REMATCH[0]}"}
+    tail=${tail#"${tail%%[![:space:]]*}"}
+    verb=${tail%%[[:space:]]*}
+    tail=" $tail"
+    read_only='(^|[[:space:]])(--help|-h|--plan)([[:space:]]|$)'
+    [[ ! $tail =~ $read_only ]] || continue
+    scope='(^|[[:space:]])--scope([[:space:]]+|=)([^[:space:]]+)'
+    global='(^|[[:space:]])(-g|--global)([[:space:]]|$)'
+    if [[ $tail =~ $scope ]]; then
+      [ "${BASH_REMATCH[3]}" != global ] || continue
+    elif [[ $tail =~ $global ]]; then
       continue
     fi
-    case "$group:$word" in
-      :refresh | :apply | :add | :remove | :update-pi | :updates | :pin | :fork | :adopt | :drift-hook)
-        FOUND=$word
-        ;;
-      source:add | source:remove | source:enable | source:disable | marketplace:subscribe | marketplace:unsubscribe)
-        FOUND="$group $word"
-        ;;
-      source:-*)
-        lead="$lead $raw"
-        [ "$word" != --scope ] || value=1
-        continue
-        ;;
-      *:source | *:marketplace)
-        group=$word
-        lead=""
-        continue
-        ;;
-      *)
-        group=""
-        lead=""
-        continue
-        ;;
+    case "$verb" in
+      refresh|apply|add|remove|pin|fork|adopt|drift-hook) ;;
+      updates)
+        [[ $tail =~ (^|[[:space:]])--apply([[:space:]]|$) ]] || continue ;;
+      update-pi)
+        [[ ! $tail =~ (^|[[:space:]])(--check|-c)([[:space:]]|$) ]] || continue ;;
+      source)
+        [[ $tail =~ (^|[[:space:]])(add|remove|enable|disable)([[:space:]]|$) ]] || continue ;;
+      marketplace)
+        [[ $tail =~ (^|[[:space:]])(subscribe|unsubscribe)([[:space:]]|$) ]] || continue ;;
+      *) continue ;;
     esac
-    TAIL="$lead $glued$rest"
-    return 0
-  done
-}
-
-# Shell forms stay silent only when the installed CLI guards the writes
-# the baseline reader finds. The CLI judges the actual parsed destination.
-PLAIN='^[[:alnum:]_./:@%=+,[:space:]&|;-]*$'
-if [[ ! $COMMAND =~ $PLAIN ]]; then
-  writing_verb "$COMMAND"
-  [ -z "$FOUND" ] || require_capability
-  exit 0
+    [ -n "$WRITE" ] || WRITE=$verb
+  done <<<"$COMMAND"
+  [ -n "$WRITE" ] || exit 0
 fi
-SINGLE_CALL=no
-single='^[[:blank:]]*kendex([[:blank:]]+[[:alnum:]_./:@%=+,-]+)+[[:blank:]]*$'
-[[ $COMMAND =~ $single ]] && SINGLE_CALL=yes
-COMMAND=${COMMAND//;/$'\n'}
-COMMAND=${COMMAND//&/$'\n'}
-COMMAND=${COMMAND//|/$'\n'}
-WRITE=""
-# Baseline writer-word matching has refusal-only reach beyond a bare call.
-# It does not establish what a prefix or another command will execute.
-while IFS= read -r segment; do
-  [[ $segment =~ $KENDEX_RE ]] || continue
-  tail=${segment#*"${BASH_REMATCH[0]}"}
-  tail=${tail#"${tail%%[![:space:]]*}"}
-  verb=${tail%%[[:space:]]*}
-  tail=" $tail"
-  read_only='(^|[[:space:]])(--help|-h|--plan)([[:space:]]|$)'
-  [[ ! $tail =~ $read_only ]] || continue
-  scope='(^|[[:space:]])--scope([[:space:]]+|=)([^[:space:]]+)'
-  global='(^|[[:space:]])(-g|--global)([[:space:]]|$)'
-  if [[ $tail =~ $scope ]]; then
-    [ "${BASH_REMATCH[3]}" != global ] || continue
-  elif [[ $tail =~ $global ]]; then
-    continue
-  fi
-  case "$verb" in
-    refresh|apply|add|remove|pin|fork|adopt|drift-hook) ;;
-    updates)
-      [[ $tail =~ (^|[[:space:]])--apply([[:space:]]|$) ]] || continue ;;
-    update-pi)
-      [[ ! $tail =~ (^|[[:space:]])(--check|-c)([[:space:]]|$) ]] || continue ;;
-    source)
-      [[ $tail =~ (^|[[:space:]])(add|remove|enable|disable)([[:space:]]|$) ]] || continue ;;
-    marketplace)
-      [[ $tail =~ (^|[[:space:]])(subscribe|unsubscribe)([[:space:]]|$) ]] || continue ;;
-    *) continue ;;
-  esac
-  [ -n "$WRITE" ] || WRITE=$verb
-done <<<"$COMMAND"
-[ -n "$WRITE" ] || exit 0
 CWD=$(printf '%s' "$INPUT" | jq -r '
   if .tool_input.workdir != null then .tool_input.workdir
   elif .tool_input.cwd != null then .tool_input.cwd
@@ -211,4 +161,8 @@ resolve() {
 GIT_DIR=$(resolve "$CWD" "${DIRS%%$'\n'*}") || notice unavailable git "$GIT_DIR"
 COMMON_DIR=$(resolve "$CWD" "${DIRS#*$'\n'}") || notice unavailable git "$COMMON_DIR"
 [ "$GIT_DIR" != "$COMMON_DIR" ] || exit 0
+if [ "$NONPLAIN" = yes ]; then
+  require_capability
+  exit 0
+fi
 notice advisory "$WRITE"
