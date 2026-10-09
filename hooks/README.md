@@ -6,7 +6,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `block-bare-cd`: Stops a command whose whole line is a `cd`. Where the shell stays open between tool calls, that moves every later command with it. Names the scoped form to use instead.
 - `block-repo-copy`: Stops a copy of a repository's `.git` folder or build output into a temporary folder, which can fill the disk. Suggests reading the source where it sits instead.
 - `block-unsafe-rm`: Stops deletes of shared directory roots, their direct globs or child paths with . or .. segments, and paths that start with a variable that may be empty. The refusal gives a safe cleanup pattern.
-- `block-worktree-refresh`: Requires a CLI with project-write protection before advising on plain kendex writes in linked worktrees. Older executables must be updated.
+- `block-worktree-refresh`: Requires the installed CLI's project-write protection before advising on plain kendex writes in linked worktrees. Other executable paths must name that same file.
 - `cloud-git-hooks`: Arms the repository's git checks when a Claude Code cloud session starts or resumes. Local sessions do nothing; an installation gap is reported to the agent.
 - `command-safety`: Refuses shell commands matching a project's deny pattern, a kilobyte or megabyte systemd-run memory cap by default, and every command while its settings file cannot be read.
 - `critical-path-deny`: In an unattended orch lane, turns down Claude Code's prompt for an rm it could not check at once, with the rewrite that passes, instead of leaving the lane waiting on an answer nobody gives.

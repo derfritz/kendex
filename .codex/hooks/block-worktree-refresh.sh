@@ -3,9 +3,9 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Report an early advisory for a plain project-writing kendex command from a linked git worktree only after each matched executable confirms its parsed project-write guard. Missing capability, a failed query or an unreadable response refuses with the CLI update route. Quoted text, heredocs, wrappers and other shell forms are outside this check. Global, read and preview commands pass silently.
-# summary: Requires a CLI with project-write protection before advising on plain kendex writes in linked worktrees. Older executables must be updated.
-# safety: Reads the hook payload and git checkout paths. Queries each matched executable with --worktree-project-write-capability; a supporting CLI answers before bootstrap writes. Refuses missing payload tools, unreadable or invalid payloads, invalid working-directory values, missing CLI capability and failed context output. A supported executable retains unavailable advisories for a missing git or a failed git check.
+# description: Report an early advisory for a plain project-writing kendex command from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. A path-qualified candidate must name that same file; any other candidate refuses with the trusted command route without execution. Missing capability, a failed query or an unreadable response refuses with the CLI update route. Quoted text, heredocs, wrappers and other shell forms are outside this check. Global, read and preview commands pass silently.
+# summary: Requires the installed CLI's project-write protection before advising on plain kendex writes in linked worktrees. Other executable paths must name that same file.
+# safety: Reads the hook payload, git checkout paths and candidate file identities. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability; a supporting CLI answers before bootstrap writes. Never executes a proposed path. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, other executable identities, missing CLI capability and failed context output. A supported executable retains unavailable advisories for a missing git or a failed git check.
 # timeout: 10
 # ---
 
@@ -41,16 +41,31 @@ $3"
 }
 
 require_guard() {
-  local executable
+  local trusted executable candidate
+  trusted=$(type -P kendex) || refuse cli-update-required 'kendex; route=update'
+  case "$trusted" in
+    /*) ;;
+    *) trusted="$PWD/$trusted" ;;
+  esac
   for executable in "${EXECUTABLES[@]}"; do
-    # The CLI owns target checks. A catalog refresh can reach an executable
-    # that predates them, so an advisory needs its documented fixed response.
-    if ! (cd -- "$CWD" && "$executable" --worktree-project-write-capability) 2>/dev/null |
-      jq -e -s 'length == 1 and .[0] == {worktree_project_write_guard: 1}' >/dev/null 2>&1; then
-      printf 'block-worktree-refresh: cli-update-required=%s; route=update\n' "$executable" >&2
-      exit 2
-    fi
+    case "$executable" in
+      */*)
+        case "$executable" in
+          /*) candidate=$executable ;;
+          *) candidate="$CWD/$executable" ;;
+        esac
+        # Claude PreToolUse runs before Bash approval. Candidate identity is a
+        # read-only check, never permission to launch the proposed bytes.
+        [ "$candidate" -ef "$trusted" ] || refuse cli-untrusted "$executable; route=$trusted"
+        ;;
+    esac
   done
+  # Catalog refresh and executable updates are independent. Only the hook's
+  # installed PATH command may supply the guard's documented fixed response.
+  if ! "$trusted" --worktree-project-write-capability 2>/dev/null |
+    jq -e -s 'length == 1 and .[0] == {worktree_project_write_guard: 1}' >/dev/null 2>&1; then
+    refuse cli-update-required "$trusted; route=update"
+  fi
 }
 
 MISSING=""
