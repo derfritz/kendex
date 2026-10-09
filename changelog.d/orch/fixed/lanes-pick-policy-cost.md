@@ -1,0 +1,1 @@
+- Lane selection and account listing parse account settings once and reuse directory identities, so larger retirement lists do not start more commands for each account.
