@@ -319,6 +319,8 @@ fn cross_checkout_refusal(output: &Output, caller: &Path, target: &Path) -> bool
     reason = "one writer table shares its refusal and own/global controls"
 )]
 fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_controls_pass() {
+    use test_util::lane::Entry;
+
     // Claude Code creates linked worktrees below the main checkout's
     // project markers. Without nearer markers, the real project walk
     // selects that main checkout for every writing verb below.
@@ -341,18 +343,7 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
         "subscribe",
         "unsubscribe",
     ] {
-        for (directory, control) in [
-            ("", "own"),
-            ("", "global"),
-            ("vendor", "own"),
-            ("vendor", "global"),
-            ("bare", "own"),
-            ("bare", "global"),
-            ("bare", "independent"),
-        ] {
-            if cfg!(windows) && control == "global" {
-                continue;
-            }
+        for directory in ["", "vendor", "bare"] {
             let mut fixture = world();
             let caller = fixture.main.join(".claude/worktrees/caller");
             fs::create_dir_all(caller.parent().expect("caller parent"))
@@ -368,7 +359,7 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                 ],
             );
             fixture.linked = caller.clone();
-            let mut cwd = caller.join(directory);
+            let inherited = caller.join(directory);
             if matches!(directory, "vendor" | "bare") {
                 // Git's clone --bare producer has no working tree. The
                 // enclosing linked checkout still owns this caller.
@@ -410,7 +401,7 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                 )
                 .expect("adopt bytes");
             }
-            let mut args = match verb {
+            let args = match verb {
                 "refresh" | "apply" => vec![verb, "--yes", "--leave"],
                 "add" => vec![
                     "add",
@@ -465,65 +456,26 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                 _ => unreachable!("writer table"),
             };
             let before = snapshot(&fixture.root);
-            let output = kendex(&fixture, &cwd, &args);
+            let output = kendex(&fixture, &inherited, &args);
             assert!(
                 cross_checkout_refusal(&output, &caller, &fixture.main),
                 "{verb}: {output:?}"
             );
             assert_eq!(snapshot(&fixture.root), before, "{verb} refusal wrote");
 
-            if directory == "bare" && control == "own" && verb == "refresh" {
+            if directory == "bare" && verb == "refresh" {
                 for read in [
                     vec!["list", "--scope", "project"],
                     vec!["apply", "--plan"],
                     vec!["updates"],
                 ] {
-                    let output = kendex(&fixture, &cwd, &read);
+                    let output = kendex(&fixture, &inherited, &read);
                     assert!(output.status.success(), "bare read {read:?}: {output:?}");
                 }
             }
 
-            if control == "own" && matches!(verb, "refresh" | "apply" | "updates") {
-                if directory == "bare" {
-                    let extra = catalog.join("skills/extra");
-                    fs::create_dir_all(&extra).expect("new skill source");
-                    fs::write(
-                        extra.join("SKILL.md"),
-                        "---\nname: extra\ndescription: Fixture\n---\nBody.\n",
-                    )
-                    .expect("new skill bytes");
-                    let manifest = fixture.main.join("kendex.toml");
-                    let contents = fs::read_to_string(&manifest).expect("current declaration");
-                    fs::write(
-                        &manifest,
-                        format!("{contents}\n[skills.extra]\nsource=\"cat\"\n"),
-                    )
-                    .expect("pending project write");
-                }
-                fixture.mark();
-                let before = snapshot(&fixture.root);
-                let output = kendex(&fixture, &cwd, &args);
-                assert!(refusal(&output), "marked {directory} {verb}: {output:?}");
-                assert_eq!(
-                    snapshot(&fixture.root),
-                    before,
-                    "marked {verb} refusal wrote"
-                );
-                if directory == "bare" {
-                    let mut overridden = args.clone();
-                    overridden.push("--lane-refresh");
-                    let output = kendex(&fixture, &cwd, &overridden);
-                    assert!(output.status.success(), "bare override {verb}: {output:?}");
-                    assert!(fixture.main.join(".claude/skills/extra/SKILL.md").is_file());
-                }
-                fs::remove_file(&fixture.marker).expect("remove enclosing marker");
-            }
-
-            // Change one real guard input: the destination now belongs to
-            // the caller, or it is global. The same refusal assertion must
-            // turn red, and the real command must complete successfully.
-            if control == "independent" {
-                cwd = fixture.root.join("independent.git");
+            let independent = fixture.root.join("independent.git");
+            if directory == "bare" {
                 fixture.git(
                     &fixture.root,
                     &[
@@ -531,38 +483,148 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                         "-q",
                         "--bare",
                         fixture.main.to_str().expect("fixture path"),
-                        cwd.to_str().expect("fixture path"),
+                        independent.to_str().expect("fixture path"),
                     ],
                 );
             }
-            if matches!(control, "own" | "independent") {
-                for name in ["kendex.toml", ".kendex-lock.json"] {
-                    fs::copy(fixture.main.join(name), cwd.join(name)).expect("own declaration");
+
+            // Each allowed writer changes declarations, installed files or
+            // home state. Restore the whole owned fixture before its next
+            // control so no nearer project or prior write can mask refusal.
+            let baseline = snapshot(&fixture.root);
+            let permissions: std::collections::BTreeMap<_, _> = baseline
+                .iter()
+                .filter(|(_, entry)| matches!(entry, Entry::File(_)))
+                .map(|(path, _)| {
+                    (
+                        path.clone(),
+                        fs::metadata(fixture.root.join(path))
+                            .expect("baseline file metadata")
+                            .permissions(),
+                    )
+                })
+                .collect();
+            let restore = || {
+                let current = snapshot(&fixture.root);
+                for (relative, entry) in current.iter().rev() {
+                    if baseline.get(relative) == Some(entry)
+                        || matches!(
+                            (entry, baseline.get(relative)),
+                            (Entry::File(_), Some(Entry::File(_)))
+                        )
+                    {
+                        continue;
+                    }
+                    let path = fixture.root.join(relative);
+                    if matches!(entry, Entry::Directory) || (cfg!(windows) && path.is_dir()) {
+                        fs::remove_dir(&path).expect("remove control directory");
+                    } else {
+                        fs::remove_file(&path).expect("remove control file");
+                    }
                 }
-                let install = kendex(
-                    &fixture,
-                    &cwd,
-                    &["apply", "--scope", "project", "--yes", "--leave"],
+                for (relative, entry) in &baseline {
+                    let path = fixture.root.join(relative);
+                    match entry {
+                        Entry::Directory => {
+                            fs::create_dir_all(&path).expect("restore fixture directory");
+                        }
+                        Entry::File(bytes) => {
+                            if current.get(relative) != Some(entry) {
+                                fs::write(&path, bytes).expect("restore fixture file");
+                            }
+                            fs::set_permissions(&path, permissions[relative].clone())
+                                .expect("restore file permissions");
+                        }
+                        Entry::Link(_) => {
+                            assert_eq!(current.get(relative), Some(entry), "fixture link changed");
+                        }
+                    }
+                }
+                assert_eq!(snapshot(&fixture.root), baseline, "control state leaked");
+            };
+
+            for control in ["own", "global", "independent"] {
+                if (cfg!(windows) && control == "global")
+                    || (control == "independent" && directory != "bare")
+                {
+                    continue;
+                }
+                let cwd = if control == "independent" {
+                    &independent
+                } else {
+                    &inherited
+                };
+                let mut args = args.clone();
+
+                if control == "own" && matches!(verb, "refresh" | "apply" | "updates") {
+                    if directory == "bare" {
+                        let extra = catalog.join("skills/extra");
+                        fs::create_dir_all(&extra).expect("new skill source");
+                        fs::write(
+                            extra.join("SKILL.md"),
+                            "---\nname: extra\ndescription: Fixture\n---\nBody.\n",
+                        )
+                        .expect("new skill bytes");
+                        let manifest = fixture.main.join("kendex.toml");
+                        let contents = fs::read_to_string(&manifest).expect("current declaration");
+                        fs::write(
+                            &manifest,
+                            format!("{contents}\n[skills.extra]\nsource=\"cat\"\n"),
+                        )
+                        .expect("pending project write");
+                    }
+                    fixture.mark();
+                    let before = snapshot(&fixture.root);
+                    let output = kendex(&fixture, cwd, &args);
+                    assert!(refusal(&output), "marked {directory} {verb}: {output:?}");
+                    assert_eq!(
+                        snapshot(&fixture.root),
+                        before,
+                        "marked {verb} refusal wrote"
+                    );
+                    if directory == "bare" {
+                        let mut overridden = args.clone();
+                        overridden.push("--lane-refresh");
+                        let output = kendex(&fixture, cwd, &overridden);
+                        assert!(output.status.success(), "bare override {verb}: {output:?}");
+                        assert!(fixture.main.join(".claude/skills/extra/SKILL.md").is_file());
+                    }
+                    fs::remove_file(&fixture.marker).expect("remove enclosing marker");
+                }
+
+                // Change one real guard input: the destination now belongs to
+                // the caller, or it is global. The same refusal assertion must
+                // turn red, and the real command must complete successfully.
+                if matches!(control, "own" | "independent") {
+                    for name in ["kendex.toml", ".kendex-lock.json"] {
+                        fs::copy(fixture.main.join(name), cwd.join(name)).expect("own declaration");
+                    }
+                    let install = kendex(
+                        &fixture,
+                        cwd,
+                        &["apply", "--scope", "project", "--yes", "--leave"],
+                    );
+                    assert!(install.status.success(), "own setup: {install:?}");
+                    let borrowed = cwd.join(".claude/skills/borrowed");
+                    fs::create_dir_all(&borrowed).expect("own adopt fixture");
+                    fs::write(
+                        borrowed.join("SKILL.md"),
+                        "---\nname: borrowed\ndescription: Fixture\n---\nBody.\n",
+                    )
+                    .expect("own adopt bytes");
+                } else if matches!(verb, "add" | "bare-add") {
+                    args.push("--global");
+                } else {
+                    args.extend(["--scope", "global"]);
+                }
+                let output = kendex(&fixture, cwd, &args);
+                assert!(
+                    !cross_checkout_refusal(&output, &caller, &fixture.main),
+                    "must-fail {control} {verb}: {output:?}"
                 );
-                assert!(install.status.success(), "own setup: {install:?}");
-                let borrowed = cwd.join(".claude/skills/borrowed");
-                fs::create_dir_all(&borrowed).expect("own adopt fixture");
-                fs::write(
-                    borrowed.join("SKILL.md"),
-                    "---\nname: borrowed\ndescription: Fixture\n---\nBody.\n",
-                )
-                .expect("own adopt bytes");
-            } else if matches!(verb, "add" | "bare-add") {
-                args.push("--global");
-            } else {
-                args.extend(["--scope", "global"]);
+                assert!(output.status.success(), "{control} {verb}: {output:?}");
+                restore();
             }
-            let output = kendex(&fixture, &cwd, &args);
-            assert!(
-                !cross_checkout_refusal(&output, &caller, &fixture.main),
-                "must-fail {control} {verb}: {output:?}"
-            );
-            assert!(output.status.success(), "{control} {verb}: {output:?}");
         }
     }
 }
