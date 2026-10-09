@@ -2,7 +2,7 @@
 # Inputs: block-worktree-refresh.sh and lib/first-line.sh.
 # The parsed CLI owns destination refusals. The catalog hook requires its
 # installed PATH command's fixed capability protocol before advisory output
-# or a standalone kendex word in non-plain text from a linked/unknown checkout.
+# or a kendex word/path basename in non-plain text from a linked/unknown checkout.
 # Only one plain bare call can advise. Other plain writer-word matches refuse.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -122,6 +122,21 @@ assert_eq "$(cat "$QUERY_LOG")" queried 'quoted title asks one trusted PATH capa
 QUOTED_TEXT_ROW='quoted kendex text belongs to guarded CLI|command|0|-|printf "%s" "kendex refresh"'
 first_table "$QUOTED_TEXT_ROW"
 assert_eq "$(cat "$QUERY_LOG")" queried 'quoted kendex text asks one trusted PATH capability'
+PATH_ROWS='absolute quoted writer belongs to guarded CLI|command|0|-|/home/dev/.local/bin/kendex "refresh"
+relative quoted writer belongs to guarded CLI|command|0|-|./kendex "refresh"
+quoted executable belongs to guarded CLI|command|0|-|"/opt/x/kendex" "refresh"
+quoted slash basename belongs to guarded CLI|command|0|-|printf "%s" "/kendex"'
+PATH_ROWS="$PATH_ROWS
+unapproved quoted path belongs to guarded CLI|command|0|-|$WT/tools/kendex \"refresh\""
+tar -cf "$TMP_ROOT/before.tar" -C "$TMP_ROOT" main linked home
+while IFS= read -r row; do
+  first_table "$row"
+  assert_eq "$(cat "$QUERY_LOG")" queried 'executable basename asks one trusted PATH capability'
+  assert_unapproved_not_run
+done <<<"$PATH_ROWS"
+tar -cf "$TMP_ROOT/after.tar" -C "$TMP_ROOT" main linked home
+if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
+assert_eq "$unchanged" yes 'supported executable basename preserves complete fixture'
 first_table 'plain refresh is an advisory|command|0|block-worktree-refresh: advisory=refresh|kendex refresh
 plain next command refuses|command|2|block-worktree-refresh: refused=refresh|git status && kendex refresh
 global refresh stays silent|command|0|-|kendex refresh --global
@@ -157,7 +172,7 @@ for mode in old failed empty unreadable wrong multiple stderr; do
   if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
   assert_eq "$unchanged" yes "$mode refusal preserves complete fixture"
 done
-# Standalone kendex words require the same capability on an older CLI.
+# Kendex words and path basenames require the same capability on an older CLI.
 export CAPABILITY_MODE=old
 silent='|command|0|-|'
 update="|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|"
@@ -170,6 +185,15 @@ first_table 'non-plain text without kendex stays silent|command|0|-|printf "%s" 
 assert_eq "$(cat "$QUERY_LOG")" '' 'text without kendex has no query'
 first_table "${QUOTED_TEXT_ROW//$silent/$update}"
 assert_eq "$(cat "$QUERY_LOG")" queried 'old quoted kendex text asks one trusted capability'
+tar -cf "$TMP_ROOT/before.tar" -C "$TMP_ROOT" main linked home
+while IFS= read -r row; do
+  first_table "${row//$silent/$update}"
+  assert_eq "$(cat "$QUERY_LOG")" queried 'old executable basename asks one trusted PATH capability'
+  assert_unapproved_not_run
+done <<<"$PATH_ROWS"
+tar -cf "$TMP_ROOT/after.tar" -C "$TMP_ROOT" main linked home
+if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
+assert_eq "$unchanged" yes 'old executable basename preserves complete fixture'
 
 # The recorded completion wait is a real read-only producer. Paths and file
 # names are data; the existing table checks each excluded word boundary.
@@ -178,6 +202,10 @@ FILE_ROWS="$ABSOLUTE_WAIT_ROW
 portable lock read stays silent|command|0|-|cat .kendex-lock.json | jq .
 quoted lock read stays silent|command|0|-|cat \".kendex-lock.json\" | jq .
 manifest name stays silent|command|0|-|cat \"kendex.toml\"
+absolute Markdown data stays silent|command|0|-|cat /abs/kendex-refresh.md
+absolute manifest data stays silent|command|0|-|cat /abs/kendex.toml
+path through kendex stays silent|command|0|-|cat \"/x/kendex/y\"
+settings data stays silent|command|0|-|cat \".kendex/settings.toml\"
 hyphen suffix stays silent|command|0|-|printf \"%s\" \"kendex-web\"
 underscore suffix stays silent|command|0|-|printf \"%s\" \"kendex_cache\"
 alphanumeric suffix stays silent|command|0|-|printf \"%s\" \"kendex2\"
@@ -185,7 +213,6 @@ alphanumeric prefix stays silent|command|0|-|printf \"%s\" \"mykendex\"
 dot prefix stays silent|command|0|-|printf \"%s\" \"x.kendex\"
 hyphen prefix stays silent|command|0|-|printf \"%s\" \"x-kendex\"
 underscore prefix stays silent|command|0|-|printf \"%s\" \"_kendex\"
-slash prefix stays silent|command|0|-|printf \"%s\" \"/kendex\"
 slash suffix stays silent|command|0|-|printf \"%s\" \"kendex/file\""
 while IFS= read -r row; do
   first_table "$row"
@@ -313,7 +340,7 @@ for shape in object string; do
 done
 
 # Rerun the same assertions against copies with a planted defect.
-for defect in title advisory capability_old capability_failed capability_unreadable quoted_permissive nonplain_boundary nonplain_uncertain nonplain_checkout single_call baseline_word unapproved_launch; do
+for defect in title advisory capability_old capability_failed capability_unreadable quoted_permissive nonplain_path nonplain_boundary nonplain_uncertain nonplain_checkout single_call baseline_word unapproved_launch; do
   mutant="$TMP_ROOT/$defect.sh"
   rm -f "$UNAPPROVED_MARKER"
   case "$defect" in
@@ -332,6 +359,14 @@ for defect in title advisory capability_old capability_failed capability_unreada
       export CAPABILITY_MODE=old
       rows="old quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\"
 old help then quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex help && kendex \"refresh\"" ;;
+    nonplain_path)
+      awk '/^NONPLAIN_KENDEX_RE=/ {
+        start=index($0, "])("); word=index($0, "kendex("); n++
+        if(!start || word<=start+2) exit 2
+        print substr($0, 1, start+1) substr($0, word); next
+      } {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      export CAPABILITY_MODE=old
+      rows="${PATH_ROWS//$silent/$update}" ;;
     nonplain_boundary)
       awk '/^  \[\[ \$COMMAND =~ \$NONPLAIN_KENDEX_RE \]\] \|\| exit 0$/ {print "  [[ $COMMAND == *kendex* ]] || exit 0"; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       export CAPABILITY_MODE=old
