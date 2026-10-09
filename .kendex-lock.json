@@ -2519,12 +2519,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "sourceHash": "12891db6499bc5a8ef1db402e0b14e474211611ef5c04195465364f50eb39621",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
+      "renderedHash": "7cd3f6d811e4a950853b178a891af6abbd748d5bbab942a0dc52f2033f76c78a",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2557,12 +2557,12 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "sourceHash": "12891db6499bc5a8ef1db402e0b14e474211611ef5c04195465364f50eb39621",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
+      "renderedHash": "7cd3f6d811e4a950853b178a891af6abbd748d5bbab942a0dc52f2033f76c78a",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2595,12 +2595,12 @@
       "harness": "copilot",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "sourceHash": "12891db6499bc5a8ef1db402e0b14e474211611ef5c04195465364f50eb39621",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
+      "renderedHash": "7cd3f6d811e4a950853b178a891af6abbd748d5bbab942a0dc52f2033f76c78a",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -2633,12 +2633,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "sourceHash": "12891db6499bc5a8ef1db402e0b14e474211611ef5c04195465364f50eb39621",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
+      "renderedHash": "7cd3f6d811e4a950853b178a891af6abbd748d5bbab942a0dc52f2033f76c78a",
       "enabled": true,
       "emitted": {
         "kind": "hook",
@@ -8947,7 +8947,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "f77b2a1d8fc4ea4b2119052072a32406ebb98863"
+      "commit": "79f3c113f8d1e325c45dcb6507f38f640a84af2e"
     }
   }
 }
