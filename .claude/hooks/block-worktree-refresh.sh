@@ -3,9 +3,9 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Report an early advisory for a plain project-writing kendex command from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. A path-qualified candidate must name that same file; any other candidate refuses with the trusted command route without execution. Missing capability, a failed query or an unreadable response refuses with the CLI update route. Quoted text, heredocs, wrappers and other shell forms are outside this check. Global, read and preview commands pass silently.
-# summary: Requires the installed CLI's project-write protection before advising on plain kendex writes in linked worktrees. Other executable paths must name that same file.
-# safety: Reads the hook payload, git checkout paths and candidate file identities. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability; a supporting CLI answers before bootstrap writes. Never executes a proposed path. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, other executable identities, missing CLI capability and failed context output. A supported executable retains unavailable advisories for a missing git or a failed git check.
+# description: Report an early advisory for one plain bare project-writing kendex call from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. Other plain writer-word matches retain baseline refusals, including compound commands, prefixes and executable paths. Global, read and preview commands pass silently. Quoted titles, messages, heredocs and other complex shell forms stay outside the plain scan. Missing capability, a failed query or an unreadable response refuses with the CLI update route.
+# summary: Requires the installed CLI's project-write protection before advising on one plain bare kendex call in a linked worktree. Other matched project writers refuse.
+# safety: Reads the hook payload and git checkout paths. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability for a single bare call; a supporting CLI answers before bootstrap writes. Never executes a proposed path. Other plain project-writer matches refuse without querying or advising. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, missing CLI capability and failed context output. A supported bare call retains unavailable advisories for a missing git or a failed git check.
 # timeout: 10
 # ---
 
@@ -41,25 +41,13 @@ $3"
 }
 
 require_guard() {
-  local trusted executable candidate
+  [ "$SINGLE_CALL" = yes ] || refuse refused "$WRITE" 'Run one bare kendex command from its project checkout.'
+  local trusted
   trusted=$(type -P kendex) || refuse cli-update-required 'kendex; route=update'
   case "$trusted" in
     /*) ;;
     *) trusted="$PWD/$trusted" ;;
   esac
-  for executable in "${EXECUTABLES[@]}"; do
-    case "$executable" in
-      */*)
-        case "$executable" in
-          /*) candidate=$executable ;;
-          *) candidate="$CWD/$executable" ;;
-        esac
-        # Claude PreToolUse runs before Bash approval. Candidate identity is a
-        # read-only check, never permission to launch the proposed bytes.
-        [ "$candidate" -ef "$trusted" ] || refuse cli-untrusted "$executable; route=$trusted"
-        ;;
-    esac
-  done
   # Catalog refresh and executable updates are independent. Only the hook's
   # installed PATH command may supply the guard's documented fixed response.
   if ! "$trusted" --worktree-project-write-capability 2>/dev/null |
@@ -92,17 +80,22 @@ COMMAND=$(printf '%s' "$INPUT" | jq -r '
 # after the shell has selected the command, arguments and directory.
 PLAIN='^[[:alnum:]_./:@%=+,[:space:]&|;-]*$'
 [[ $COMMAND =~ $PLAIN ]] || exit 0
+SINGLE_CALL=no
+single='^[[:blank:]]*kendex([[:blank:]]+[[:alnum:]_./:@%=+,-]+)+[[:blank:]]*$'
+[[ $COMMAND =~ $single ]] && SINGLE_CALL=yes
 COMMAND=${COMMAND//;/$'\n'}
 COMMAND=${COMMAND//&/$'\n'}
 COMMAND=${COMMAND//|/$'\n'}
 WRITE=""
-EXECUTABLES=()
+# Baseline writer-word matching has refusal-only reach beyond a bare call.
+# It does not establish what a prefix or another command will execute.
+KENDEX_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]|$)'
 while IFS= read -r segment; do
-  EXECUTABLE='^[[:space:]]*(([^[:space:]]*/)?kendex)[[:space:]]+([^[:space:]]+)'
-  [[ $segment =~ $EXECUTABLE ]] || continue
-  executable=${BASH_REMATCH[1]}
-  verb=${BASH_REMATCH[3]}
-  tail=${segment#*kendex}
+  [[ $segment =~ $KENDEX_RE ]] || continue
+  tail=${segment#*"${BASH_REMATCH[0]}"}
+  tail=${tail#"${tail%%[![:space:]]*}"}
+  verb=${tail%%[[:space:]]*}
+  tail=" $tail"
   read_only='(^|[[:space:]])(--help|-h|--plan)([[:space:]]|$)'
   [[ ! $tail =~ $read_only ]] || continue
   scope='(^|[[:space:]])--scope([[:space:]]+|=)([^[:space:]]+)'
@@ -125,7 +118,6 @@ while IFS= read -r segment; do
     *) continue ;;
   esac
   [ -n "$WRITE" ] || WRITE=$verb
-  EXECUTABLES+=("$executable")
 done <<<"$COMMAND"
 [ -n "$WRITE" ] || exit 0
 CWD=$(printf '%s' "$INPUT" | jq -r '
