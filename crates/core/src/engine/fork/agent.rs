@@ -180,21 +180,19 @@ fn published(of: &ForkOf) -> Result<Published> {
     };
     let bytes = sealed.read(&path)?;
     let in_scope = crate::engine::ScopeSkills::of(env, scope, manifest)?;
+    let carry = agent_carry(manifest, &sealed, &config, name, &bytes, &in_scope)?;
     Ok(Published {
         read_at: commit,
         agent: parse_source_agent(&String::from_utf8_lossy(&bytes))
             .map_err(|problem| unreadable(name, &decl.source, problem))?,
-        carry: agent_carry(manifest, &sealed, &config, name, &bytes, &in_scope)?,
         overrides: merge_overrides(
-            config
-                .frontmatter
-                .get(harness.name())
-                .and_then(|by_agent| by_agent.get(name)),
+            carry.as_ref().and_then(|carry| carry.overrides(harness)),
             manifest
                 .agent_frontmatter
                 .get(harness.name())
                 .and_then(|by_agent| by_agent.get(name)),
         ),
+        carry,
         bytes,
     })
 }
@@ -309,6 +307,7 @@ fn render(
         launch_instructions: around.launch.clone(),
         additional_instructions: around.additional.clone(),
         custom_hooks: around.hooks.clone(),
+        role_policy: None,
     };
     crate::render::agent::generate(&effective).map(|rendered| rendered.text)
 }

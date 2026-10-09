@@ -14,8 +14,11 @@ pub mod cursor;
 pub mod gemini;
 pub mod opencode;
 pub mod pi;
+mod role_policy;
 mod source;
 
+pub(crate) use role_policy::role_rule;
+pub use role_policy::{RolePolicy, RoleRule};
 pub use source::{Role, SourceAgent, default_pane, parse_source_agent};
 
 /// One skill an agent requires, with the directory the agent is told to
@@ -72,9 +75,21 @@ pub struct EffectiveAgent<'a> {
     pub launch_instructions: Option<String>,
     pub additional_instructions: Option<String>,
     pub custom_hooks: Vec<&'a CustomHook>,
+    /// The source catalog's `[role-policy]`; `None` where it declared none,
+    /// which renders the fleet default.
+    pub role_policy: Option<&'a RolePolicy>,
 }
 
 impl EffectiveAgent<'_> {
+    /// What this agent's `role:` implies in this harness.
+    pub fn role_rule(&self) -> RoleRule {
+        let mut rule = role_policy::role_rule(self.role_policy, self.harness, self.source.role);
+        if let Some(denies) = &self.overrides.role_deny_tools {
+            rule.deny_tools.clone_from(denies);
+        }
+        rule
+    }
+
     /// Source and manifest model precedence, shared with native intent lookup.
     pub fn model_request(&self) -> &str {
         Self::requested_model(self.source, &self.overrides)
@@ -160,6 +175,7 @@ pub fn merge_overrides(
     take!(color);
     take!(model);
     take!(allow_tools);
+    take!(role_deny_tools);
     take!(allowed_subagents);
     take!(pane);
     take!(background);
@@ -451,6 +467,7 @@ mod tests {
                     launch_instructions: None,
                     additional_instructions: None,
                     custom_hooks: vec![],
+                    role_policy: None,
                 };
                 let text = generate(&agent).unwrap().text;
                 let model_lines: Vec<_> = text
@@ -494,6 +511,7 @@ mod tests {
                 launch_instructions: None,
                 additional_instructions: None,
                 custom_hooks: vec![],
+                role_policy: None,
             };
             generate(&agent).unwrap().text
         };
@@ -547,6 +565,7 @@ mod tests {
                 launch_instructions: None,
                 additional_instructions: None,
                 custom_hooks: vec![],
+                role_policy: None,
             };
             generate(&agent).unwrap().text
         };

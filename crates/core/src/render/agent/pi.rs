@@ -1,5 +1,5 @@
 use super::{
-    EffectiveAgent, GENERATED_BANNER, RenderedAgent, Role, default_pane, hooks_prose, skills_prose,
+    EffectiveAgent, GENERATED_BANNER, RenderedAgent, default_pane, hooks_prose, skills_prose,
 };
 use crate::model::HarnessId;
 use crate::render::permission::PermissionIntent;
@@ -90,13 +90,12 @@ fn model(agent: &EffectiveAgent, effort: Option<&str>) -> (Option<String>, Optio
     )
 }
 
-/// Engineers delegate reconnaissance to scout by default; every other role
-/// stays a leaf.
+/// The override's delegates, else the role policy's; an agent with
+/// neither stays a leaf.
 fn allowed_subagents(agent: &EffectiveAgent) -> Vec<String> {
     let list = match &agent.overrides.allowed_subagents {
         Some(list) => list.clone(),
-        None if agent.source.role == Some(Role::Engineer) => vec!["scout".to_owned()],
-        None => Vec::new(),
+        None => agent.role_rule().allowed_subagents,
     };
     let mut out: Vec<String> = Vec::new();
     for name in list {
@@ -136,12 +135,7 @@ fn deny_tools(agent: &EffectiveAgent, allowed: &[String]) -> Vec<String> {
     if allowed.is_empty() {
         tools.push("delegate_subagent".to_owned());
     }
-    if agent.source.role != Some(Role::Planner) {
-        tools.push("question".to_owned());
-    }
-    if agent.source.role == Some(Role::Reviewer) {
-        tools.push("tasks_write".to_owned());
-    }
+    tools.extend(agent.role_rule().deny_tools);
     tools.extend(user.iter().cloned());
 
     let mut out: Vec<String> = Vec::new();
@@ -150,15 +144,6 @@ fn deny_tools(agent: &EffectiveAgent, allowed: &[String]) -> Vec<String> {
             continue;
         }
         out.push(tool);
-    }
-    // A live allowlist needs the delegation tool, so the default deny goes —
-    // unless the user asked for it, in which case their policy wins and the
-    // allowlist stays inert.
-    let user_denies_delegate = user
-        .iter()
-        .any(|tool| normalize(tool) == "delegate_subagent");
-    if !allowed.is_empty() && !user_denies_delegate {
-        out.retain(|tool| normalize(tool) != "delegate_subagent");
     }
     out
 }
@@ -221,6 +206,7 @@ mod tests {
             launch_instructions: None,
             additional_instructions: None,
             custom_hooks: vec![],
+            role_policy: None,
         }
     }
 
@@ -284,6 +270,42 @@ mod tests {
         assert!(deny_line(&text).contains("delegate_subagent"));
     }
 
+    /// A catalog's declared policy replaces the fleet default: an engineer
+    /// it names nothing for delegates to no `scout` and keeps `question`,
+    /// and a role it names gets exactly its delegates and denies.
+    #[test]
+    fn a_declared_role_policy_replaces_scout_and_the_role_denies() {
+        let table: toml::Table =
+            "[role-policy.pi.reviewer]\ndeny-tools = [\"bash\"]\nallowed-subagents = [\"probe\"]\n"
+                .parse()
+                .unwrap();
+        let policy = crate::render::agent::RolePolicy::parse(&table["role-policy"]).unwrap();
+        let scope = Scope::Global;
+        let engineer = source("rust", "engineer", "opus");
+        let mut agent = effective(&engineer, &scope);
+        agent.role_policy = Some(&policy);
+        let text = generate(&agent).unwrap().text;
+        assert!(!text.contains("allowed-subagents:"), "{text}");
+        assert_eq!(
+            deny_line(&text),
+            "deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, delegate_subagent"
+        );
+
+        let reviewer = source("reviewer-arch", "reviewer", "sonnet");
+        let mut agent = effective(&reviewer, &scope);
+        agent.role_policy = Some(&policy);
+        let text = generate(&agent).unwrap().text;
+        assert!(text.contains("allowed-subagents: probe\n"), "{text}");
+        assert_eq!(
+            deny_line(&text),
+            "deny-tools: subagent, get_subagent_result, steer_subagent, stop_subagent, bash"
+        );
+
+        // The allowlist refusal holds under a declared policy too.
+        agent.permissions = PermissionIntent::allow_only(vec!["read".into()]);
+        assert!(generate(&agent).is_err());
+    }
+
     #[test]
     fn a_tool_allowlist_refuses_rather_than_widens() {
         let source = source("reviewer-arch", "reviewer", "sonnet");
@@ -292,6 +314,43 @@ mod tests {
         agent.permissions = PermissionIntent::allow_only(vec!["read".into()]);
         let refusal = generate(&agent).unwrap_err();
         assert!(refusal.contains("widen"));
+    }
+
+    /// Delegates do not remove denies declared by the catalog, a carried
+    /// role rule, or the agent's permission intent.
+    #[test]
+    fn an_explicit_delegation_deny_survives_a_delegate_list() {
+        let table: toml::Table =
+            "[role-policy.pi.engineer]\ndeny-tools = [\"delegate-subagent\"]\nallowed-subagents = [\"probe\"]\n"
+                .parse()
+                .unwrap();
+        let policy = crate::render::agent::RolePolicy::parse(&table["role-policy"]).unwrap();
+        let source = source("rust", "engineer", "opus");
+        let scope = Scope::Global;
+        for origin in ["catalog", "carried", "permissions"] {
+            let mut agent = effective(&source, &scope);
+            match origin {
+                "catalog" => agent.role_policy = Some(&policy),
+                "carried" => {
+                    agent.overrides.role_deny_tools = Some(vec!["delegate-subagent".into()]);
+                }
+                "permissions" => {
+                    agent.permissions =
+                        PermissionIntent::DenyExtra(vec!["delegate-subagent".into()]);
+                }
+                _ => unreachable!(),
+            }
+            agent.overrides.allowed_subagents = Some(vec!["probe".into()]);
+            let text = generate(&agent).unwrap().text;
+            assert!(
+                text.contains("allowed-subagents: probe\n"),
+                "{origin}: {text}"
+            );
+            assert!(
+                deny_line(&text).contains("delegate-subagent"),
+                "{origin}: {text}"
+            );
+        }
     }
 
     #[test]
