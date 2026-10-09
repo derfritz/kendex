@@ -10,6 +10,12 @@ enum Case {
     Marked,
     NestedMarked,
     NestedUnmarked,
+    BareMarked,
+    BareUnmarked,
+    AdministrationMarked,
+    AdministrationUnmarked,
+    IndependentBare,
+    IndependentAdministration,
     TaggedBranch,
     Unmarked,
     NoMarkers,
@@ -34,6 +40,12 @@ fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
         Case::Marked,
         Case::NestedMarked,
         Case::NestedUnmarked,
+        Case::BareMarked,
+        Case::BareUnmarked,
+        Case::AdministrationMarked,
+        Case::AdministrationUnmarked,
+        Case::IndependentBare,
+        Case::IndependentAdministration,
         Case::TaggedBranch,
         Case::Unmarked,
         Case::NoMarkers,
@@ -49,30 +61,73 @@ fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
         let fixture = Fixture::new("KEN-2299");
         fixture.mark();
         let nested = fixture.linked.join("vendor");
+        let independent = fixture.root.join("vendor");
+        let administration = nested.join(".git/objects");
+        let independent_administration = independent.join(".git/objects");
         let mut checked = &fixture.linked;
         match case {
-            Case::NestedMarked | Case::NestedUnmarked => {
-                // Git clone owns a nearer non-linked repository. The launch
-                // marker still belongs to the checkout enclosing that clone.
-                fixture.git(
-                    &fixture.linked,
-                    &[
-                        "clone",
-                        "-q",
-                        fixture.main.to_str().expect("fixture path"),
-                        "vendor",
-                    ],
+            Case::NestedMarked
+            | Case::NestedUnmarked
+            | Case::BareMarked
+            | Case::BareUnmarked
+            | Case::AdministrationMarked
+            | Case::AdministrationUnmarked
+            | Case::IndependentBare
+            | Case::IndependentAdministration => {
+                // Git clone and clone --bare create real inner repositories.
+                // Their working-tree status does not change physical enclosure.
+                let outside = matches!(
+                    case,
+                    Case::IndependentBare | Case::IndependentAdministration
                 );
-                checked = &nested;
+                let destination = if outside { &independent } else { &nested };
+                let mut args = vec!["clone", "-q"];
+                if matches!(
+                    case,
+                    Case::BareMarked | Case::BareUnmarked | Case::IndependentBare
+                ) {
+                    args.push("--bare");
+                }
+                args.extend([
+                    fixture.main.to_str().expect("fixture path"),
+                    destination.to_str().expect("fixture path"),
+                ]);
+                fixture.git(&fixture.root, &args);
+                checked = if matches!(
+                    case,
+                    Case::AdministrationMarked | Case::AdministrationUnmarked
+                ) {
+                    &administration
+                } else if matches!(case, Case::IndependentAdministration) {
+                    &independent_administration
+                } else {
+                    destination
+                };
+                if !matches!(case, Case::NestedMarked | Case::NestedUnmarked) {
+                    assert!(
+                        kendex_core::guard::Repo::probe(checked)
+                            .expect("working-tree probe")
+                            .is_none()
+                    );
+                }
                 let enclosing = kendex_core::guard::Repo::enclosing_linked(checked)
-                    .expect("enclosing repository")
-                    .expect("linked checkout");
+                    .expect("enclosing repository");
+                if outside {
+                    assert!(enclosing.is_none());
+                } else {
+                    assert_eq!(
+                        enclosing.expect("linked checkout").worktree,
+                        fixture.linked.canonicalize().expect("linked root")
+                    );
+                }
                 assert_eq!(
-                    enclosing.worktree,
-                    fixture.linked.canonicalize().expect("linked root")
+                    kendex_core::guard::Repo::enclosed_by_linked(checked).expect("enclosure"),
+                    !outside
                 );
-                assert!(kendex_core::guard::Repo::enclosed_by_linked(checked).expect("enclosure"));
-                if matches!(case, Case::NestedUnmarked) {
+                if matches!(
+                    case,
+                    Case::NestedUnmarked | Case::BareUnmarked | Case::AdministrationUnmarked
+                ) {
                     fs::remove_file(&fixture.marker).expect("remove enclosing marker");
                 }
             }
@@ -114,11 +169,19 @@ fn only_the_checked_out_item_marker_bound_to_a_linked_root_names_a_lane() {
         let result = marked_worktree(checked);
         assert_eq!(snapshot(&fixture.root), before, "marker inspection wrote");
         match case {
-            Case::Marked | Case::NestedMarked | Case::TaggedBranch => {
+            Case::Marked
+            | Case::NestedMarked
+            | Case::BareMarked
+            | Case::AdministrationMarked
+            | Case::TaggedBranch => {
                 assert_eq!(result.expect("marker read"), Some("KEN-2299".into()))
             }
             Case::Unmarked
             | Case::NestedUnmarked
+            | Case::BareUnmarked
+            | Case::AdministrationUnmarked
+            | Case::IndependentBare
+            | Case::IndependentAdministration
             | Case::NoMarkers
             | Case::Main
             | Case::Outside
