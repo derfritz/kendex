@@ -135,15 +135,29 @@ pub fn merged_instructions(
     table: &std::collections::BTreeMap<String, String>,
     agent_name: &str,
 ) -> Option<String> {
-    let shared = SHARED_INSTRUCTIONS.iter().find_map(|key| table.get(*key));
+    merged_instructions_with(table, agent_name, str::trim_end)
+}
+
+/// The same merge with the caller's whitespace treatment. Capture also
+/// reads the verbatim values written by earlier renderings.
+pub(crate) fn merged_instructions_with<'a>(
+    table: &'a std::collections::BTreeMap<String, String>,
+    agent_name: &str,
+    text: impl Fn(&'a str) -> &'a str,
+) -> Option<String> {
+    let shared = SHARED_INSTRUCTIONS
+        .iter()
+        .find_map(|key| table.get(*key))
+        .map(|value| text(value));
     // A package named `all` reads that key as everyone's, which it already
     // got as the shared entry; read twice it would render twice.
     let specific = table
         .get(agent_name)
-        .filter(|_| !shared_instructions_key(agent_name));
+        .filter(|_| !shared_instructions_key(agent_name))
+        .map(|value| text(value));
     match (shared, specific) {
         (None, None) => None,
-        (None, Some(text)) => Some(text.clone()),
+        (None, Some(text)) => Some(text.to_owned()),
         (Some(shared), specific) => {
             let mut out = format!("{SHARED_START}\n{shared}\n{SHARED_END}");
             if let Some(text) = specific {
@@ -436,6 +450,65 @@ mod tests {
         assert!(merged.ends_with("rust rule"));
         let solo = merged_instructions(&table, "other").unwrap();
         assert!(solo.contains(SHARED_START) && !solo.contains("rust rule"));
+    }
+
+    #[test]
+    fn merged_instructions_trim_trailing_whitespace_and_keep_leading_whitespace() {
+        // TOML multiline literals closed on their own line include a final newline.
+        let cases = [
+            (None, Some("  rust rule\n"), "  rust rule".to_owned()),
+            (
+                Some("  fleet rule\n"),
+                Some("  rust rule\n"),
+                format!("{SHARED_START}\n  fleet rule\n{SHARED_END}\n\n  rust rule"),
+            ),
+            (
+                Some("  fleet rule\n"),
+                None,
+                format!("{SHARED_START}\n  fleet rule\n{SHARED_END}"),
+            ),
+            (
+                Some("\n  fleet rule \t\r\n"),
+                Some("\n  rust rule \t\r\n"),
+                format!("{SHARED_START}\n\n  fleet rule\n{SHARED_END}\n\n\n  rust rule"),
+            ),
+        ];
+        for (shared, specific, expected) in cases {
+            let mut table = BTreeMap::new();
+            if let Some(text) = shared {
+                table.insert("all".to_owned(), text.to_owned());
+            }
+            if let Some(text) = specific {
+                table.insert("rust".to_owned(), text.to_owned());
+            }
+            assert_eq!(merged_instructions(&table, "rust"), Some(expected));
+        }
+    }
+
+    #[test]
+    fn copilot_additional_instructions_end_with_one_newline() {
+        let source = parse_source_agent(
+            "---\nname: rust\ndescription: Rust engineer\nmodel: inherit\nrole: engineer\n---\nBody.\n",
+        )
+        .unwrap();
+        let scope = Scope::Global;
+        let table = BTreeMap::from([("rust".to_owned(), "  rust rule\n".to_owned())]);
+        let agent = EffectiveAgent {
+            source: &source,
+            harness: HarnessId::Copilot,
+            scope: &scope,
+            skills: vec![],
+            overrides: FrontmatterOverrides::default(),
+            model_classes: Default::default(),
+            permissions: PermissionIntent::Unspecified,
+            launch_instructions: None,
+            additional_instructions: merged_instructions(&table, "rust"),
+            custom_hooks: vec![],
+            role_policy: None,
+        };
+        let text = generate(&agent).unwrap().text;
+        assert!(text.ends_with("\n\n  rust rule\n"), "{text:?}");
+        assert!(!text.ends_with("\n\n"), "{text:?}");
     }
 
     #[test]
