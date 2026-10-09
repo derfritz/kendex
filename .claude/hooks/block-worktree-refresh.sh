@@ -3,9 +3,9 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Report an early advisory for a plain project-writing kendex command from a linked git worktree. The parsed CLI checks the actual caller and writing destinations for commands covered by its worktree guard before any write. Quoted text, heredocs, wrappers and other shell forms are outside this advisory. Global, read and preview commands pass silently.
-# summary: Reports plain kendex project writes in linked worktrees. The CLI refuses cross-checkout writes for its guarded commands.
-# safety: Reads the hook payload and git checkout paths. Writes no files. Refuses missing payload tools, unreadable or invalid payloads, invalid working-directory values and failed context output. A missing git or a failed git check produces an unavailable advisory. The CLI checks guarded commands regardless of their shell form.
+# description: Report an early advisory for a plain project-writing kendex command from a linked git worktree only after each matched executable confirms its parsed project-write guard. Missing capability, a failed query or an unreadable response refuses with the CLI update route. Quoted text, heredocs, wrappers and other shell forms are outside this check. Global, read and preview commands pass silently.
+# summary: Requires a CLI with project-write protection before advising on plain kendex writes in linked worktrees. Older executables must be updated.
+# safety: Reads the hook payload and git checkout paths. Queries each matched executable with --worktree-project-write-capability; a supporting CLI answers before bootstrap writes. Refuses missing payload tools, unreadable or invalid payloads, invalid working-directory values, missing CLI capability and failed context output. A supported executable retains unavailable advisories for a missing git or a failed git check.
 # timeout: 10
 # ---
 
@@ -19,6 +19,7 @@ refuse() {
 
 notice() { # KEY VALUE [CAUSE]
   local text context shape
+  require_guard
   text="block-worktree-refresh: $1=$2
 The CLI checks the actual project destination before any write. Run from that checkout for a project change."
   [ -z "${3:-}" ] || text="$text
@@ -37,6 +38,19 @@ $3"
   context=$(jq -nc --arg text "$text" "$shape" 2>&1) || refuse notice unwritten "$context"
   printf '%s\n' "$context"
   exit 0
+}
+
+require_guard() {
+  local executable
+  for executable in "${EXECUTABLES[@]}"; do
+    # The CLI owns target checks. A catalog refresh can reach an executable
+    # that predates them, so an advisory needs its documented fixed response.
+    if ! (cd -- "$CWD" && "$executable" --worktree-project-write-capability) 2>/dev/null |
+      jq -e -s 'length == 1 and .[0] == {worktree_project_write_guard: 1}' >/dev/null 2>&1; then
+      printf 'block-worktree-refresh: cli-update-required=%s; route=update\n' "$executable" >&2
+      exit 2
+    fi
+  done
 }
 
 MISSING=""
@@ -67,10 +81,12 @@ COMMAND=${COMMAND//;/$'\n'}
 COMMAND=${COMMAND//&/$'\n'}
 COMMAND=${COMMAND//|/$'\n'}
 WRITE=""
+EXECUTABLES=()
 while IFS= read -r segment; do
-  EXECUTABLE='^[[:space:]]*([^[:space:]]*/)?kendex[[:space:]]+([^[:space:]]+)'
+  EXECUTABLE='^[[:space:]]*(([^[:space:]]*/)?kendex)[[:space:]]+([^[:space:]]+)'
   [[ $segment =~ $EXECUTABLE ]] || continue
-  verb=${BASH_REMATCH[2]}
+  executable=${BASH_REMATCH[1]}
+  verb=${BASH_REMATCH[3]}
   tail=${segment#*kendex}
   read_only='(^|[[:space:]])(--help|-h|--plan)([[:space:]]|$)'
   [[ ! $tail =~ $read_only ]] || continue
@@ -93,8 +109,8 @@ while IFS= read -r segment; do
       [[ $tail =~ (^|[[:space:]])(subscribe|unsubscribe)([[:space:]]|$) ]] || continue ;;
     *) continue ;;
   esac
-  WRITE=$verb
-  break
+  [ -n "$WRITE" ] || WRITE=$verb
+  EXECUTABLES+=("$executable")
 done <<<"$COMMAND"
 [ -n "$WRITE" ] || exit 0
 CWD=$(printf '%s' "$INPUT" | jq -r '

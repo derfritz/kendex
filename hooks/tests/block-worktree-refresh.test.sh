@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Inputs: block-worktree-refresh.sh and lib/first-line.sh.
-# The parsed CLI owns refusals. This suite checks only plain-command
-# advisories, silent data and keyed payload failures.
+# The parsed CLI owns destination refusals. The catalog hook requires its
+# fixed capability protocol before advisory output or unavailable notices.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,6 +16,30 @@ OUT_FILE="$TMP_ROOT/stdout"
 BASH_BIN="$(command -v bash)"
 export HOME="$TMP_ROOT/home"
 mkdir -p "$HOME"
+BIN="$TMP_ROOT/bin"
+OLD_BIN="$TMP_ROOT/old"
+mkdir -p "$BIN" "$OLD_BIN"
+# An older executable rejects the new flag. The other rows exercise the
+# capability consumer's status and JSON contracts, rather than CLI internals.
+cat >"$BIN/kendex" <<'CLI'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" = 1 ] && [ "$1" = --worktree-project-write-capability ] || exit 2
+case "${CAPABILITY_MODE:-supported}" in
+  supported) printf '{"worktree_project_write_guard":1}\n' ;;
+  old) exit 2 ;;
+  failed) printf '{"worktree_project_write_guard":1}\n'; exit 7 ;;
+  empty) : ;;
+  unreadable) printf 'not-json\n' ;;
+  wrong) printf '{"worktree_project_write_guard":0}\n' ;;
+  multiple) printf '{"worktree_project_write_guard":1}\n{"worktree_project_write_guard":1}\n' ;;
+  stderr) printf '{"worktree_project_write_guard":1}\n' >&2 ;;
+esac
+CLI
+printf '#!/usr/bin/env bash\nexit 2\n' >"$OLD_BIN/kendex"
+chmod +x "$BIN/kendex" "$OLD_BIN/kendex"
+export PATH="$BIN:$PATH"
+export CAPABILITY_MODE=supported
 export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
 MAIN="$TMP_ROOT/main"
 WT="$TMP_ROOT/linked"
@@ -55,7 +79,6 @@ wrapper belongs to CLI|command|0|-|env FOO=1 kendex refresh
 plain argument is data|command|0|-|printf kendex refresh"
 first_table "$DATA_ROWS"
 first_table 'plain refresh is an advisory|command|0|block-worktree-refresh: advisory=refresh|kendex refresh
-plain executable path is an advisory|command|0|block-worktree-refresh: advisory=apply|/usr/local/bin/kendex apply
 plain next command is an advisory|command|0|block-worktree-refresh: advisory=refresh|git status && kendex refresh
 global refresh stays silent|command|0|-|kendex refresh --global
 global scope stays silent|command|0|-|kendex refresh --scope global
@@ -73,6 +96,44 @@ help stays silent|command|0|-|kendex refresh --help
 invalid JSON refuses|payload|2|block-worktree-refresh: payload=invalid-json|{
 wrong command type refuses|payload|2|block-worktree-refresh: payload=invalid-json|{"command":false}
 empty payload refuses|payload|2|block-worktree-refresh: payload=empty|-'
+first_table "plain executable path is an advisory|command|0|block-worktree-refresh: advisory=apply|$BIN/kendex apply"
+
+for mode in old failed empty unreadable wrong multiple stderr; do
+  export CAPABILITY_MODE=$mode
+  # Include every file, directory and link under the project and portable home.
+  tar -cf "$TMP_ROOT/before.tar" -C "$TMP_ROOT" main linked home
+  first_table "$mode capability refuses|command|2|block-worktree-refresh: cli-update-required=kendex; route=update|kendex refresh"
+  assert_eq "$(awk 'END {print NR}' "$ERR_FILE")" 1 "$mode refusal has one update line"
+  [ ! -s "$OUT_FILE" ] && output=empty || output=present
+  assert_eq "$output" empty "$mode refusal has no context"
+  tar -cf "$TMP_ROOT/after.tar" -C "$TMP_ROOT" main linked home
+  if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
+  assert_eq "$unchanged" yes "$mode refusal preserves complete fixture"
+done
+# Existing excluded input stays silent even when its executable is older.
+export CAPABILITY_MODE=old
+first_table "$DATA_ROWS"
+first_table 'older global stays silent|command|0|-|kendex refresh --scope global
+older read stays silent|command|0|-|kendex verify
+older preview stays silent|command|0|-|kendex apply --plan'
+export CAPABILITY_MODE=supported
+first_table "supported first cannot hide older second|command|2|block-worktree-refresh: cli-update-required=$OLD_BIN/kendex; route=update|$BIN/kendex refresh && $OLD_BIN/kendex apply
+missing executable refuses|command|2|block-worktree-refresh: cli-update-required=$TMP_ROOT/missing/kendex; route=update|$TMP_ROOT/missing/kendex refresh"
+supported_path=$PATH
+export PATH="$OLD_BIN:$PATH"
+first_table "selected path beats older PATH command|command|0|block-worktree-refresh: advisory=refresh|$BIN/kendex refresh"
+export PATH=$supported_path
+
+if [ -n "${KENDEX_UNDER_TEST:-}" ]; then
+  # The build receipt binds this actual executable to the changed CLI tree.
+  mkdir -p "$TMP_ROOT/current"
+  ln -s "$KENDEX_UNDER_TEST" "$TMP_ROOT/current/kendex"
+  tar -cf "$TMP_ROOT/before.tar" -C "$TMP_ROOT" main linked home
+  first_table "actual current CLI stays advisory|command|0|block-worktree-refresh: advisory=refresh|$TMP_ROOT/current/kendex refresh"
+  tar -cf "$TMP_ROOT/after.tar" -C "$TMP_ROOT" main linked home
+  if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
+  assert_eq "$unchanged" yes 'actual capability query preserves complete fixture'
+fi
 
 run_hook 'kendex refresh'
 context=$(jq -r '.hookSpecificOutput.additionalContext | split("\n")[0]' "$OUT_FILE")
@@ -92,7 +153,7 @@ for shape in object string; do
 done
 
 # Rerun the same assertions against copies with a planted defect.
-for defect in title executable advisory; do
+for defect in title executable advisory capability first_only; do
   mutant="$TMP_ROOT/$defect.sh"
   case "$defect" in
     title)
@@ -104,6 +165,13 @@ for defect in title executable advisory; do
     advisory)
       awk '/^notice advisory "\$WRITE"$/ {print ": advisory \"$WRITE\""; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       rows='plain refresh is an advisory|command|0|block-worktree-refresh: advisory=refresh|kendex refresh' ;;
+    capability)
+      awk '/^  require_guard$/ {print "  : require_guard"; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      export CAPABILITY_MODE=old
+      rows='old capability refuses|command|2|block-worktree-refresh: cli-update-required=kendex; route=update|kendex refresh' ;;
+    first_only)
+      awk '/^  EXECUTABLES\+=/ {print; print "  break"; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      rows="supported first cannot hide older second|command|2|block-worktree-refresh: cli-update-required=$OLD_BIN/kendex; route=update|$BIN/kendex refresh && $OLD_BIN/kendex apply" ;;
   esac
   original=$HOOK saved_pass=$PASS saved_fail=$FAIL
   HOOK=$mutant PASS=0 FAIL=0
@@ -112,6 +180,7 @@ for defect in title executable advisory; do
   HOOK=$original PASS=$saved_pass FAIL=$saved_fail
   [ "$failed" -gt 0 ] && status=red || status=green
   assert_eq "$status" red "$defect defect turns its assertion red"
+  export CAPABILITY_MODE=supported
 done
 printf 'block-worktree-refresh: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

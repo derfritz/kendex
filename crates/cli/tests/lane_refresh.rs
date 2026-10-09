@@ -56,6 +56,43 @@ fn refusal(output: &Output) -> bool {
 }
 
 #[test]
+#[allow(
+    clippy::expect_used,
+    reason = "fixture and machine protocol failures fail the test"
+)]
+fn guard_capability_answers_before_project_checks_and_bootstrap_writes() {
+    // The catalog hook consumes this fixed JSON protocol. Its query also
+    // works in a marked lane and one inheriting a different checkout's project.
+    for location in ["main", "own-lane", "inherited-lane"] {
+        let fixture = world();
+        fixture.mark();
+        if location == "inherited-lane" {
+            fs::remove_file(fixture.linked.join("kendex.toml")).expect("inherited declaration");
+        }
+        let cwd = if location == "main" {
+            &fixture.main
+        } else {
+            &fixture.linked
+        };
+        let before = snapshot(&fixture.root);
+        let output = kendex(&fixture, cwd, &["--worktree-project-write-capability"]);
+        assert!(output.status.success(), "capability exit at {location}");
+        assert!(output.stderr.is_empty(), "capability stderr at {location}");
+        let answer: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("capability protocol");
+        assert_eq!(
+            answer,
+            serde_json::json!({"worktree_project_write_guard": 1})
+        );
+        assert_eq!(
+            snapshot(&fixture.root),
+            before,
+            "capability wrote at {location}"
+        );
+    }
+}
+
+#[test]
 #[allow(clippy::expect_used, reason = "fixture marker removal must succeed")]
 fn every_project_writer_refuses_before_writes_and_its_unmarked_control_lands() {
     for (directory, args) in [

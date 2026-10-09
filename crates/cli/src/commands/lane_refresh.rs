@@ -10,6 +10,10 @@ use crate::flags::ProjectTargetFlag;
 use crate::scope::ScopeFilter;
 use crate::{Cli, Command};
 
+/// `block-worktree-refresh` parses this fixed response before an advisory.
+/// It requires the parsed project-write check even when its catalog updated first.
+pub(crate) const CAPABILITY: &str = "{\"worktree_project_write_guard\":1}";
+
 /// Check the parsed command before any CLI bootstrap writes.
 pub(crate) fn check(cli: &Cli) -> CliResult {
     match check_project_writes(cli) {
