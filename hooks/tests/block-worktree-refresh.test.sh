@@ -2,7 +2,7 @@
 # Inputs: block-worktree-refresh.sh and lib/first-line.sh.
 # The parsed CLI owns destination refusals. The catalog hook requires its
 # installed PATH command's fixed capability protocol before advisory output
-# or non-plain text naming kendex in a linked or uncertain checkout.
+# or a standalone kendex word in non-plain text from a linked/unknown checkout.
 # Only one plain bare call can advise. Other plain writer-word matches refuse.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -119,6 +119,9 @@ first_table "$COMPOUND_QUOTED_ROW"
 assert_eq "$(cat "$QUERY_LOG")" queried 'help then quoted writer asks one trusted PATH capability'
 first_table "$VG_ROW"
 assert_eq "$(cat "$QUERY_LOG")" queried 'quoted title asks one trusted PATH capability'
+QUOTED_TEXT_ROW='quoted kendex text belongs to guarded CLI|command|0|-|printf "%s" "kendex refresh"'
+first_table "$QUOTED_TEXT_ROW"
+assert_eq "$(cat "$QUERY_LOG")" queried 'quoted kendex text asks one trusted PATH capability'
 first_table 'plain refresh is an advisory|command|0|block-worktree-refresh: advisory=refresh|kendex refresh
 plain next command refuses|command|2|block-worktree-refresh: refused=refresh|git status && kendex refresh
 global refresh stays silent|command|0|-|kendex refresh --global
@@ -154,7 +157,7 @@ for mode in old failed empty unreadable wrong multiple stderr; do
   if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
   assert_eq "$unchanged" yes "$mode refusal preserves complete fixture"
 done
-# Non-plain text naming kendex requires the same capability on an older CLI.
+# Standalone kendex words require the same capability on an older CLI.
 export CAPABILITY_MODE=old
 silent='|command|0|-|'
 update="|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|"
@@ -165,6 +168,29 @@ older preview stays silent|command|0|-|kendex apply --plan'
 first_table "older quoted non-writer needs capability|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|printf \"%s\" \"kendex verify\""
 first_table 'non-plain text without kendex stays silent|command|0|-|printf "%s" "other text"'
 assert_eq "$(cat "$QUERY_LOG")" '' 'text without kendex has no query'
+first_table "${QUOTED_TEXT_ROW//$silent/$update}"
+assert_eq "$(cat "$QUERY_LOG")" queried 'old quoted kendex text asks one trusted capability'
+
+# The recorded completion wait is a real read-only producer. Paths and file
+# names are data; the existing table checks each excluded word boundary.
+ABSOLUTE_WAIT_ROW="absolute completion wait stays silent|command|0|-|timeout 540 sh -c 'until test -s /home/dev/dev/.worktrees/kendex/ken-3464/tmp/waiter.wYoEfu/wait.exit; do sleep 30; done'"
+FILE_ROWS="$ABSOLUTE_WAIT_ROW
+portable lock read stays silent|command|0|-|cat .kendex-lock.json | jq .
+quoted lock read stays silent|command|0|-|cat \".kendex-lock.json\" | jq .
+manifest name stays silent|command|0|-|cat \"kendex.toml\"
+hyphen suffix stays silent|command|0|-|printf \"%s\" \"kendex-web\"
+underscore suffix stays silent|command|0|-|printf \"%s\" \"kendex_cache\"
+alphanumeric suffix stays silent|command|0|-|printf \"%s\" \"kendex2\"
+alphanumeric prefix stays silent|command|0|-|printf \"%s\" \"mykendex\"
+dot prefix stays silent|command|0|-|printf \"%s\" \"x.kendex\"
+hyphen prefix stays silent|command|0|-|printf \"%s\" \"x-kendex\"
+underscore prefix stays silent|command|0|-|printf \"%s\" \"_kendex\"
+slash prefix stays silent|command|0|-|printf \"%s\" \"/kendex\"
+slash suffix stays silent|command|0|-|printf \"%s\" \"kendex/file\""
+while IFS= read -r row; do
+  first_table "$row"
+  assert_eq "$(cat "$QUERY_LOG")" '' 'path or file-name occurrence has no query'
+done <<<"$FILE_ROWS"
 
 # Both known checkout results bypass the compatibility query. The real Git
 # fixture proves these cases without deriving expected values from the hook.
@@ -259,6 +285,10 @@ if [ -n "${KENDEX_UNDER_TEST:-}" ]; then
   export PATH="$TMP_ROOT/current:$PATH"
   tar -cf "$TMP_ROOT/before.tar" -C "$TMP_ROOT" main linked home
   first_table "actual current CLI stays advisory|command|0|block-worktree-refresh: advisory=refresh|kendex refresh"
+  first_table "$QUOTED_ROW
+$COMPOUND_QUOTED_ROW
+$VG_ROW
+$QUOTED_TEXT_ROW"
   tar -cf "$TMP_ROOT/after.tar" -C "$TMP_ROOT" main linked home
   if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
   assert_eq "$unchanged" yes 'actual capability query preserves complete fixture'
@@ -283,7 +313,7 @@ for shape in object string; do
 done
 
 # Rerun the same assertions against copies with a planted defect.
-for defect in title advisory capability_old capability_failed capability_unreadable quoted_permissive nonplain_uncertain nonplain_checkout single_call baseline_word unapproved_launch; do
+for defect in title advisory capability_old capability_failed capability_unreadable quoted_permissive nonplain_boundary nonplain_uncertain nonplain_checkout single_call baseline_word unapproved_launch; do
   mutant="$TMP_ROOT/$defect.sh"
   rm -f "$UNAPPROVED_MARKER"
   case "$defect" in
@@ -302,6 +332,10 @@ for defect in title advisory capability_old capability_failed capability_unreada
       export CAPABILITY_MODE=old
       rows="old quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\"
 old help then quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex help && kendex \"refresh\"" ;;
+    nonplain_boundary)
+      awk '/^  \[\[ \$COMMAND =~ \$NONPLAIN_KENDEX_RE \]\] \|\| exit 0$/ {print "  [[ $COMMAND == *kendex* ]] || exit 0"; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      export CAPABILITY_MODE=old
+      rows=$ABSOLUTE_WAIT_ROW ;;
     nonplain_uncertain)
       awk '/^  if \[ "\$NONPLAIN" = yes \]; then$/ {gate=1} gate && /^    require_capability$/ {print "    : require_capability"; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       export CAPABILITY_MODE=old

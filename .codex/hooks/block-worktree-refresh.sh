@@ -3,9 +3,9 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Report an early advisory for one plain bare project-writing kendex call from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. Other plain writer-word matches retain baseline refusals, including compound commands, prefixes and executable paths. Global, read and preview commands retain their plain classification. Non-plain text containing kendex requires the same capability in a linked worktree or when Git cannot establish checkout identity; a supporting answer passes silently. Known main checkouts and non-repositories pass without a query. This backstop covers accidental quoted and compound forms, not deliberately hidden executable names. Missing capability, a failed query or an unreadable response refuses with the CLI update route.
-# summary: Requires installed CLI project-write protection before a plain bare worktree advisory or silent non-plain text naming kendex in a linked or unknown checkout. Other plain project writers refuse.
-# safety: Reads the hook payload and git checkout paths. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability for a single bare call, or non-plain text containing kendex in a linked or uncertain checkout; a supporting CLI answers before bootstrap writes. Never executes a proposed path or infers execution from quoted text. Other plain project-writer matches refuse without querying or advising. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, missing CLI capability and failed context output. A supported bare call retains unavailable advisories for a missing git or a failed git check.
+# description: Report an early advisory for one plain bare project-writing kendex call from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. Other plain writer-word matches retain baseline refusals, including compound commands, prefixes and executable paths. Global, read and preview commands retain their plain classification. Non-plain text naming kendex as a standalone word requires the same capability in a linked worktree or when Git cannot establish checkout identity; a supporting answer passes silently. Path and file-name occurrences do not require capability. Known main checkouts and non-repositories pass without a query. This backstop covers accidental quoted and compound forms, not deliberately hidden executable names. Missing capability, a failed query or an unreadable response refuses with the CLI update route.
+# summary: Requires installed CLI project-write protection before a plain bare worktree advisory or silent non-plain text naming the kendex word in a linked or unknown checkout. Path and file names do not trigger the check. Other plain project writers refuse.
+# safety: Reads the hook payload and git checkout paths. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability for a single bare call, or a standalone kendex word in non-plain text from a linked or uncertain checkout; a supporting CLI answers before bootstrap writes. One whole-text word-boundary check excludes path and file-name occurrences. Never executes a proposed path or infers execution from quoted text. Other plain project-writer matches refuse without querying or advising. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, missing CLI capability and failed context output. A supported bare call retains unavailable advisories for a missing git or a failed git check.
 # timeout: 10
 # ---
 
@@ -92,10 +92,11 @@ NONPLAIN=no
 SINGLE_CALL=no
 WRITE=""
 PLAIN='^[[:alnum:]_./:@%=+,[:space:]&|;-]*$'
+NONPLAIN_KENDEX_RE='(^|[[:space:];()&|`'"'"'"$=])kendex($|[[:space:];()&|`'"'"'"])'
 # Text selection is a compatibility backstop for accidental quoted/compound
 # forms, not a claim about shell execution. The CLI guards parsed writes.
 if [[ ! $COMMAND =~ $PLAIN ]]; then
-  [[ $COMMAND == *kendex* ]] || exit 0
+  [[ $COMMAND =~ $NONPLAIN_KENDEX_RE ]] || exit 0
   NONPLAIN=yes
 else
   single='^[[:blank:]]*kendex([[:blank:]]+[[:alnum:]_./:@%=+,-]+)+[[:blank:]]*$'
