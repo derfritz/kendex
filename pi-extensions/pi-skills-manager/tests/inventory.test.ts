@@ -43,7 +43,7 @@ test("the inventory holds no skill body; the body is read for the skill shown", 
 test("session_start loads no inventory, with or without a UI", async () => {
 	const load = spyOn(registryModule, "loadSkillRegistry");
 	const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => unknown>>();
-	skillsManager({
+	await skillsManager({
 		on: (name: string, handler: (event: unknown, ctx: unknown) => unknown) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
 		events: { on: () => () => undefined },
 		registerCommand() {},

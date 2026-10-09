@@ -1,10 +1,6 @@
 import { InteractiveMode } from "@earendil-works/pi-coding-agent";
 import { STARTUP_HIDE_ENABLED_SYMBOL, STARTUP_PATCH_SYMBOL } from "./constants.js";
 
-export function setStartupHideEnabled(enabled: boolean): void {
-	(globalThis as unknown as Record<PropertyKey, unknown>)[STARTUP_HIDE_ENABLED_SYMBOL] = enabled;
-}
-
 function startupHideEnabled(): boolean {
 	return (globalThis as unknown as Record<PropertyKey, unknown>)[STARTUP_HIDE_ENABLED_SYMBOL] === true;
 }

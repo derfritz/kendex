@@ -1,7 +1,6 @@
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { projectSettingsPath } from "./package-config.js";
+import { piUserDir, projectSettingsPath } from "./package-config.js";
 import type { ExtensionInstallScope } from "./types.js";
 
 export function findProjectPiDir(cwd: string): string {
@@ -21,7 +20,7 @@ export function detectExtensionInstallScope(cwd: string): ExtensionInstallScope 
 	try {
 		const extensionFile = fileURLToPath(import.meta.url);
 		if (isWithin(extensionFile, findProjectPiDir(cwd))) return "project";
-		if (isWithin(extensionFile, getAgentDir())) return "global";
+		if (isWithin(extensionFile, piUserDir())) return "global";
 	} catch {
 		// Fall through to global for unusual loaders.
 	}

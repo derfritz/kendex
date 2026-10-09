@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Pi loads the skills manager's dialog, inventory, toggles, and generation code only when `/skill` opens it. Disabled startup-list hiding and a disabled manager also avoid loading the host startup patch.
+
 ### 2.0.4
 
 - Deleting a skill no longer holds Pi until every file is removed: Pi keeps drawing while the files go, though on Node a skill of thousands of files can still pause it briefly. The manager shows that the deletion is running and takes no input until it ends, then reports the deletion; a deletion that fails, or a skill list that fails to reload after one, is reported as an error and the manager takes input again. The skill preview lays out its content once per width instead of on every frame, and search matches against text built once when the list loads, so scrolling a long skill and typing a search stay responsive with a large catalog.

@@ -6,14 +6,9 @@
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { INSTALL_SYMBOL } from "./skills-manager/constants.js";
-import { createSkillFromAnswers } from "./skills-manager/creation.js";
-import { showSkillsManager } from "./skills-manager/dialog.js";
+import { INSTALL_SYMBOL, STARTUP_HIDE_ENABLED_SYMBOL } from "./skills-manager/constants.js";
 import { installSettingsCacheRefresh, recordProjectTrust } from "./skills-manager/package-config.js";
-import { deleteSkill, loadSkillRegistry } from "./skills-manager/registry.js";
 import { settingBoolean, updatePackageConfig } from "./skills-manager/settings.js";
-import { patchInteractiveModeStartupSkillsBlock, setStartupHideEnabled } from "./skills-manager/startup.js";
-import { setSkillEnabled } from "./skills-manager/toggle.js";
 import type { SkillEntry } from "./skills-manager/types.js";
 
 function errorMessage(error: unknown): string {
@@ -25,13 +20,27 @@ function insertNativeSkillCommand(ctx: ExtensionContext, skill: SkillEntry): voi
 	ctx.ui.pasteToEditor(`/skill:${skill.name}\n`);
 }
 
-export default function skillsManager(pi: ExtensionAPI): void {
+type StartupModule = typeof import("./skills-manager/startup.js");
+let startupModule: StartupModule | undefined;
+
+function setStartupHideEnabled(enabled: boolean): void {
+	(globalThis as unknown as Record<PropertyKey, unknown>)[STARTUP_HIDE_ENABLED_SYMBOL] = enabled;
+}
+
+async function configureStartupSkillsBlock(cwd = process.cwd()): Promise<void> {
+	const hideSkills = settingBoolean("enabled", true, cwd) && settingBoolean("hideStartupSkillsBlock", true, cwd);
+	setStartupHideEnabled(hideSkills);
+	if (!hideSkills) return;
+	startupModule ??= await import("./skills-manager/startup.js");
+	startupModule.patchInteractiveModeStartupSkillsBlock();
+}
+
+export default async function skillsManager(pi: ExtensionAPI): Promise<void> {
 	const guard = pi as unknown as Record<PropertyKey, unknown>;
 	if (guard[INSTALL_SYMBOL]) return;
 	guard[INSTALL_SYMBOL] = true;
 
-	patchInteractiveModeStartupSkillsBlock();
-	setStartupHideEnabled(settingBoolean("enabled", true) && settingBoolean("hideStartupSkillsBlock", true));
+	await configureStartupSkillsBlock();
 
 	const enabledAtLoad = settingBoolean("enabled", true);
 
@@ -60,9 +69,9 @@ export default function skillsManager(pi: ExtensionAPI): void {
 
 	// The inventory is loaded when /skill opens the manager and dropped when it
 	// closes, so a session that never opens it, headless or not, holds none.
-	function prepareSession(ctx: ExtensionContext): void {
+	async function prepareSession(ctx: ExtensionContext): Promise<void> {
 		recordProjectTrust(ctx);
-		setStartupHideEnabled(settingBoolean("enabled", true, ctx.cwd) && settingBoolean("hideStartupSkillsBlock", true, ctx.cwd));
+		await configureStartupSkillsBlock(ctx.cwd);
 	}
 
 	pi.registerCommand("skill", {
@@ -88,6 +97,19 @@ export default function skillsManager(pi: ExtensionAPI): void {
 				ctx.ui.notify("/skill manager requires interactive mode", "warning");
 				return;
 			}
+			let modules;
+			try {
+				modules = await Promise.all([
+					import("./skills-manager/creation.js"),
+					import("./skills-manager/dialog.js"),
+					import("./skills-manager/registry.js"),
+					import("./skills-manager/toggle.js"),
+				]);
+			} catch (error) {
+				ctx.ui.notify(`Failed to load skills manager: ${errorMessage(error)}`, "error");
+				return;
+			}
+			const [{ createSkillFromAnswers }, { showSkillsManager }, { deleteSkill, loadSkillRegistry }, { setSkillEnabled }] = modules;
 			let registry;
 			try {
 				registry = await loadSkillRegistry(ctx.cwd);
@@ -106,5 +128,5 @@ export default function skillsManager(pi: ExtensionAPI): void {
 	});
 
 	installSettingsCacheRefresh(pi);
-	pi.on("session_start", (_event, ctx) => { prepareSession(ctx); });
+	pi.on("session_start", async (_event, ctx) => { await prepareSession(ctx); });
 }
