@@ -407,6 +407,12 @@ case "${1:-}" in
         f="${f##*/cmd-}"; printf '%s\n' "${f%%.*}"
       done; } | sort -u
     exit 0 ;;
+  # `kill-window -t <pane id>`, the walled lane's relaunch: the target is
+  # logged to kill-window.calls, and kill-window-fail makes the call fail.
+  kill-window)
+    printf '%s\n' "$(dash_t "$@")" >> "$STUB_DIR/kill-window.calls"
+    [[ ! -f "$STUB_DIR/kill-window-fail" ]] || { echo "can't find pane" >&2; exit 1; }
+    exit 0 ;;
   capture-pane)
     lane=""; join=0
     while [[ $# -gt 0 ]]; do [[ "$1" == "-t" ]] && lane="$(lane_name "$2")"; [[ "$1" == *J* && "$1" == -* ]] && join=1; shift; done
@@ -739,7 +745,7 @@ if [[ "${1:-}" == pick ]]; then
     shift
   done
   case "$harness" in
-    claude | codex) ;;
+    claude | codex | pi | copilot) ;;
     *) printf 'lanes: invalid-pick-harness option=--harness\n' >&2; exit 1 ;;
   esac
   base="$STUB_DIR/pick-${ORCH_LANE_HOST:-unset}-$harness-$model"
@@ -854,7 +860,7 @@ run_watch() {
   done
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
-       env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST \
+       env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR -u ORCH_LANE_HOST -u ORCH_WALL_RELAUNCH \
            -u ORCH_WATCH_TAIL_LINES -u ORCH_WATCH_PREPARE_SECS -u ORCH_WATCH_START_STALL_SECS -u ORCH_WATCH_LANE_STALL_SECS -u ORCH_CLOUD_STALL_MINUTES -u ORCH_WATCH_LANE_AGE_SECS -u ORCH_OVERSEER_MARK_REPEAT -u LINEAR_TEAM -u ORCH_DIRECTIVE_UNREAD_SECS -u ORCH_EXTERNAL_TRIAGE -u ORCH_SECURITY_ALERTS \
            -u ORCH_SECURITY_ALERT_TOKEN_FILE -u ORCH_CONNECTED_REPOS \
            -u ORCH_REPORT_EVERY_MINUTES -u ORCH_REPORT_EVERY_ISSUES -u ORCH_REPORT_UPCOMING \
