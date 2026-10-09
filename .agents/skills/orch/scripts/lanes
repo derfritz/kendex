@@ -456,12 +456,15 @@
 #                    without usage requests, token renewal or provider accounts.
 #                    Implies --local. A cache miss reports `unreachable`, with
 #                    no windows, credits or usage age. --max-age still widens
-#                    the serve age; a TTL of 0 serves no cached figure.
+#                    the ordinary serve age; a TTL of 0 disables ordinary
+#                    figures. A live usage 429 can still carry its retained
+#                    last figure under the refusal policy below.
 #   --max-age SECS   Serve a cached usage figure up to SECS old, for a caller
 #                    naming its own pass interval. It WIDENS
 #                    ORCH_LANES_USAGE_TTL and never narrows it, so a caller
 #                    passing nothing, or less than the TTL, keeps the TTL. A
-#                    TTL of 0 is never widened: no cached figure is served.
+#                    TTL of 0 is never widened: no ordinary figure is served.
+#                    The live usage-429 retained-figure policy still applies.
 #                    A consumed bucket reset ends eligibility before this age.
 #                    ORCH_LANES_USAGE_MAX_AGE is the same value as a setting.
 #   --json           Machine-readable output
@@ -538,7 +541,8 @@
 #                      which a cloud-session pick keeps (see `pick`). A
 #                      malformed pair is refused.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 300;
-#                      0 serves no cached figure). Keep it at least the longest watch
+#                      0 disables ordinary figures, but not the live usage-429
+#                      retained-figure policy). Keep it at least the longest watch
 #                      interval on the host — `oversee-watch --interval`
 #                      defaults to 240 — because a TTL under that interval has
 #                      every pass find the figure expired and fetch again. The
@@ -606,7 +610,8 @@
 # (usage_rate_state `credits`).
 #
 # The refresh itself is HOST-WIDE SERIALIZED: a lane its record cannot answer
-# takes one lock, `.usage-refresh.lock` in that same directory, over its
+# takes one lock, unless --cache-only is set. That flag never refreshes.
+# The lock, `.usage-refresh.lock` in that same directory, covers its
 # refresh and re-reads the record inside it. Two readers arriving together are
 # therefore one refresh of each account, not two, which is what the TTL alone
 # cannot do: without the lock every caller's fetch lands in the same second at
@@ -1574,12 +1579,14 @@ measure_lane() {
 	# started with.
 	local raw="" buckets age=null current_at="" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null" sample_claims=1
 	now_s="$(date +%s)"
+	# store_usage_refusal keeps the prior figure beside a failed renewal.
+	# A cache-only reader must answer that live refusal before the figure.
+	if [[ "$CACHE_ONLY" == true ]] && refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
+		emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
+		return
+	fi
 	if ! usage_from_record "$now_s"; then
 		if [[ "$CACHE_ONLY" == true ]]; then
-			if refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
-				emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
-				return
-			fi
 			status=unreachable
 			detail="usage cache miss within $(usage_serve_max_age)s serve age (--cache-only)"
 		else
@@ -1609,7 +1616,9 @@ measure_lane() {
 # Answers the lane from its usage record without posting anything, into
 # measure_lane's own `raw`, `age`, `status` and `detail`, and the sample
 # fields take_cached_usage sets: a figure eligible by age and bucket resets,
-# else a live refusal of the usage endpoint. A 429 on record is
+# else a live refusal of the usage endpoint. Cache-only reads give the live
+# refusal priority over the figure store_usage_refusal retained beside it.
+# A 429 on record is
 # answered from the last figure beside it while serve_refused_usage finds one;
 # any other refusal, and a 429 with no such figure, is reported as the record
 # states it with no windows. Returns 1 where the record answers neither, the
@@ -1621,12 +1630,18 @@ measure_lane() {
 # most able to multiply a burst, since declining the cache is what puts every
 # caller back on the endpoint at once.
 usage_from_record() { # NOW
-	local cached refusal
-	if [[ "$USE_CACHE" == "true" ]] && cached="$(read_usage_cache "$harness" "$dir" "$1" "$(usage_serve_max_age)")"; then
+	local cached refusal=""
+	if [[ "$CACHE_ONLY" == true ]]; then
+		refusal="$(read_usage_refusal "$harness" "$dir" "$1" usage)" || refusal=""
+	fi
+	if [[ "$USE_CACHE" == "true" && -z "$refusal" ]] && cached="$(read_usage_cache "$harness" "$dir" "$1" "$(usage_serve_max_age)")"; then
 		take_cached_usage "$cached"
 		return 0
 	fi
-	refusal="$(read_usage_refusal "$harness" "$dir" "$1" usage)" || return 1
+	if [[ "$CACHE_ONLY" != true ]]; then
+		refusal="$(read_usage_refusal "$harness" "$dir" "$1" usage)" || return 1
+	fi
+	[[ -n "$refusal" ]] || return 1
 	IFS=$'\t' read -r status detail age < <(
 		jq -r '[.refusal.status, .refusal.detail, (.age | tostring)] | @tsv' <<<"$refusal"
 	)
@@ -1904,7 +1919,8 @@ read_usage_cache() { # HARNESS DIR NOW MAX_AGE_S
 # pass is longer than the TTL would otherwise fetch on every pass — the figure
 # is always past the TTL by the time it comes round — which is the burst; a
 # caller with a short pass still gets the TTL it configured. A TTL of 0 is an
-# operator asking for a fetch on every run, and no caller's interval widens it.
+# operator declining ordinary cached figures, and no caller's interval widens
+# it. The refusal reader can still serve a retained figure under its own bound.
 usage_serve_max_age() {
 	if [[ "$USAGE_TTL" -eq 0 ]]; then
 		printf 0
@@ -2364,7 +2380,12 @@ emit_lane() {
 	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}" sample_claims="${13:-1}"
 	lane_retire_date "$dir" silent
 	[[ -n "$prior" ]] || prior='{}'
-	buckets="$(account_wall_buckets "$PROJECT_ROOT" "$dir" "$buckets")" || { buckets='{}' status=error detail="wall record unreadable"; }
+	# No-figure callers pass empty buckets. In a cache-only listing, the wall
+	# oversee-watch recorded cannot supply the missing usage reading. Parsed
+	# figures and ordinary listings retain the existing wall overlay.
+	if [[ "$CACHE_ONLY" != true || "$buckets" != '{}' ]]; then
+		buckets="$(account_wall_buckets "$PROJECT_ROOT" "$dir" "$buckets")" || { buckets='{}' status=error detail="wall record unreadable"; }
+	fi
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
 	local claims="null"
