@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Copies only refresh workflows whose exact bytes kendex shipped. Adoption
+# Copies shipped refresh workflows, preserving declared consumer inputs. Adoption
 # records are inventory, not permission to replace an edit. A template from
-# the consumer's render gets a record; one from the kendex release tree, the
+# the consumer's render gets a record only for equal bytes; one from the kendex release tree, the
 # shared workflow's caller, gets none and drops any earlier record. The
 # retired writer ownership check precedes any workflow or inventory change.
 # Retired adoption records emit refresh-warning=legacy-writer value=TEMPLATE.
@@ -9,7 +9,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "${1:-}" = --help ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--retire-writer]' 'Reads the provisioned kendex environment and adopts the refresh workflow. --retire-writer removes an unedited gate workflow and its inventory entry on the trusted removal route.' 'Exact templates from kendex default-branch history permit adoption. Refresh hand edits are refused and preserved.'
+  printf '%s\n' 'Usage: adopt-refresh.sh [--templates-dir DIR] [--retire-writer]' 'Reads the declared consumer environment and adopts the refresh workflow. --retire-writer removes an unedited gate workflow and its inventory entry on the trusted removal route.' 'Environment, secret-name inputs and matching secret mappings survive adoption. All other bytes must match kendex default-branch template history.' 'An in-consumer template gets an inventory record only when the adopted bytes equal its bytes.'
   exit 0
 fi
 templates="$SCRIPT_DIR"
@@ -25,62 +25,29 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 templates="$(cd -- "$templates" && pwd)"
-repository="$(gh api 'repos/{owner}/{repo}' --jq .full_name)" || exit 1
+repository="$(python3 - "$SCRIPT_DIR" <<'REPOSITORY'
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(sys.argv[1]).parent / "skills/review-gate/scripts/lib"))
+from environment import gh_api
+try:
+    print(gh_api("repos/{owner}/{repo}", "--jq", ".full_name"), end="")
+except subprocess.CalledProcessError as error:
+    print(error.stderr, file=sys.stderr, end="")
+    raise SystemExit(1) from error
+REPOSITORY
+)" || exit 1
 if [ "$repository" = vanillagreencom/kendex ]; then
   printf 'refresh-adoption=excluded repository=%s\n' "$repository"
   exit 0
 fi
-# Process values ensure the read-only check judges the environment and secrets
-# the selected workflow reads, not a different consumer settings value.
-refresh_template="$templates/kendex-refresh.yml"
-# A caller of the shared workflow declares neither; adopt-refresh.test.sh
-# holds these equal to what .github/workflows/refresh-consumer.yml declares.
-# The judge below accepts only the shipped template's form, mapped NAMES with
-# NAMES equal to these, and refuses every other: the called workflow reads a
-# secret only where the caller maps the name to its same-named secret, and
-# reads its value from the calling repository's kendex environment.
-shared_environment=kendex
-shared_secrets='FLEET_GH_APP_ID;FLEET_GH_APP_PRIVATE_KEY'
-# Forms: inline (no shared-workflow call), mapped NAMES (each entry of the
-# secrets: mapping maps NAME to its same-named secret; NAMES ;-joined in
-# order), none (nothing under uses:, the v1.8.0 caller), not-mapping (the
-# line under uses: is not a secrets: key, such as secrets: inherit) and
-# not-same-name (an entry maps another secret or is not one expression).
-caller="$(awk '
-  function judge(form) { print form; judged = 1; exit }
-  mapping && /^      [^ ]/ {
-    name = $1; sub(/:$/, "", name)
-    if (NF != 4 || $1 != name ":" || $2 != "${{" || $3 != "secrets." name || $4 != "}}") judge("not-same-name")
-    names = names (names == "" ? "" : ";") name; next
-  }
-  mapping { judge("mapped " names) }
-  call { if ($0 != "    secrets:") judge("not-mapping"); mapping = 1; call = 0; next }
-  /^    uses: vanillagreencom\/kendex\/\.github\/workflows\/refresh-consumer\.yml@/ { call = 1 }
-  END { if (judged) exit; if (mapping) print "mapped " names; else print (call ? "none" : "inline") }' "$refresh_template")" ||
-  { printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2; }
-refuse_caller() { # CAUSE
-  printf 'refresh-error=caller-secrets value=%s cause=%s\n%s\n' "$refresh_template" "$1" \
-    "The adopter accepts only a secrets: key on the line under the caller's uses: mapping $shared_secrets, in order, each to its same-named secret." >&2
-  exit 2
-}
-case "$caller" in
-  "mapped $shared_secrets")
-    template_environment="$shared_environment"
-    template_secrets="$shared_secrets" ;;
-  mapped\ *) refuse_caller names ;;
-  none | not-mapping | not-same-name) refuse_caller "$caller" ;;
-  inline)
-    template_environment="$(sed -n 's/^    environment: \(.*\)$/\1/p' "$refresh_template")" || exit 2
-    template_secrets="$(sed -n 's/.*\${{ secrets\.\([A-Za-z0-9_]*\) }}.*/\1/p' "$refresh_template" | LC_ALL=C sort -u | paste -sd ';' -)" || exit 2 ;;
-  *) printf 'refresh-error=read value=%s\n' "$refresh_template" >&2; exit 2 ;;
-esac
-REVIEW_GATE_STANDARD_ENVIRONMENT="$template_environment" REVIEW_GATE_STANDARD_SECRETS="$template_secrets" \
-  "$SCRIPT_DIR/../skills/review-gate/scripts/validate-standard.sh" --environment-only
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP:?}"' EXIT
 # The public catalog is shipment evidence. Consumer history and supplied
 # metadata cannot license replacement. Fetch data only; execute no catalog code.
-python3 - "$templates" "$TMP" <<'PREFLIGHT'
+python3 - "$templates" "$TMP" "$SCRIPT_DIR" "$repository" <<'PREFLIGHT'
 import os
 from pathlib import Path
 import subprocess
@@ -89,6 +56,10 @@ import sys
 root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
 templates = Path(sys.argv[1])
 scratch = Path(sys.argv[2])
+sys.path.insert(0, str(Path(sys.argv[3]) / "lib"))
+from caller import InvalidCaller, configuration, configured, normalized
+sys.path.insert(0, str(Path(sys.argv[3]).parent / "skills/review-gate/scripts/lib"))
+from environment import validate_environment
 refresh = root / ".github/workflows/kendex-refresh.yml"
 if refresh.is_symlink():
     raise SystemExit("refresh-error=workflow-symlink value=" + str(refresh))
@@ -97,6 +68,29 @@ try:
     replacement = (templates / refresh.name).read_bytes()
 except OSError as error:
     raise SystemExit("refresh-error=read value=" + str(error.filename)) from error
+
+try:
+    template_config = configuration(replacement)
+except (InvalidCaller, UnicodeError) as error:
+    print("refresh-error=caller-secrets value=" + str(templates / refresh.name) + " cause=" + str(error), file=sys.stderr)
+    raise SystemExit(2) from error
+try:
+    copied_config = configuration(copied) if copied is not None else None
+except (InvalidCaller, UnicodeError):
+    # Historical shipped callers can lack mappings. Exact shipment evidence
+    # still authorizes their replacement, never an unshipped malformed edit.
+    copied_config = None
+selected_config = copied_config or template_config
+if selected_config is None:
+    # Historical inline templates still declare their own environment.
+    import re
+    text = replacement.decode()
+    environments = re.findall(r"^    environment: (.+)$", text, re.M)
+    names = sorted(set(re.findall(r"\$\{\{ secrets\.([A-Za-z0-9_]+) \}\}", text)))
+    if len(environments) != 1 or not names:
+        raise SystemExit("refresh-error=caller-secrets value=" + str(templates / refresh.name) + " cause=inline")
+    selected_config = {"environment": environments[0], "names": names}
+validate_environment(sys.argv[4], selected_config)
 
 history = scratch / "history"
 # Git's documented transport supplies full default-branch ancestry. Strip
@@ -127,13 +121,19 @@ for commit in commits:
         if not entry:  # Deleting the template ships no bytes.
             continue
         candidate = git("cat-file", "blob", entry[2].decode())
-        shipped_copy = shipped_copy or copied == candidate
-        shipped_template = shipped_template or replacement == candidate
+        try:
+            candidate_shape = normalized(candidate)
+        except (InvalidCaller, UnicodeError):
+            candidate_shape = candidate
+        copied_shape = normalized(copied) if copied_config else copied
+        shipped_copy = shipped_copy or copied_shape == candidate_shape
+        shipped_template = shipped_template or normalized(replacement) == candidate_shape
 if not shipped_template:
     raise SystemExit("refresh-error=template-edited value=" + str(templates / refresh.name))
 if not shipped_copy:
     raise SystemExit("refresh-error=workflow-edited value=" + str(refresh))
-(scratch / "template").write_bytes(replacement)
+(scratch / "source-template").write_bytes(replacement)
+(scratch / "template").write_bytes(configured(replacement, copied_config))
 if copied is not None:
     (scratch / "workflow").write_bytes(copied)
 PREFLIGHT
@@ -199,7 +199,7 @@ if refresh.is_symlink():
     raise SystemExit("refresh-error=workflow-symlink value=" + str(refresh))
 if (refresh.read_bytes() if refresh.exists() else None) != observed:
     raise SystemExit("refresh-error=workflow-changed value=" + str(refresh))
-if template.read_bytes() != template_bytes:
+if template.read_bytes() != (scratch / "source-template").read_bytes():
     raise SystemExit("refresh-error=template-changed value=" + str(template))
 # Complete the ownership checks before removing or writing any consumer file.
 for record in retiring:
@@ -207,7 +207,7 @@ for record in retiring:
 refresh.parent.mkdir(parents=True, exist_ok=True)
 refresh.write_bytes(template_bytes)
 entries = [e for e in entries if e not in retiring]
-if from_render:
+if from_render and template_bytes == (scratch / "source-template").read_bytes():
     owner = template.relative_to(root).as_posix()
     entries = [e for e in entries if not isinstance(e, dict) or e["template"] != owner]
     entries.append({"path": refresh.relative_to(root).as_posix(), "template": owner, "templateHash": digest(template)})
