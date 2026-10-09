@@ -15,15 +15,15 @@ set -euo pipefail
 source "$1"
 OL_WALK_CALLER_MODEL="$3"
 rc=0
-ol_preference_entries "$2" || rc=$?
+ol_preference_entries "$2" "${4:-}" || rc=$?
 models=()
 for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do
   ol_entry_model "$entry"
-  models+=("$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT")
+  models+=("$OL_ENTRY_HARNESS${OL_ENTRY_HOST:+@$OL_ENTRY_HOST}:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT")
 done
 printf '%s|%s|%s|%s|%s|%s\n' "$rc" "$OL_NAMED" "${models[*]-}" "${OL_DEPRECATED_ENTRIES[*]-}" "${OL_REFUSED_ENTRIES[*]-}" "$OL_BAD_ENTRY"
 # A second parse in the same process must not repeat the warning.
-ol_preference_entries "$2" || :
+ol_preference_entries "$2" "${4:-}" || :
 SH
 for row in \
   'claude:1:high|fable|0|1|claude:fable:high|claude:1:high|||1' \
@@ -48,6 +48,31 @@ for row in \
     assert_eq "$(cat "$TMP_ROOT/err")" "preference-deprecated entry=${deprecated%% *} form=harness:model:effort" "warning names the original entry and replacement form"
   fi
 done
+# Lane settings may name a host. Overseer settings keep their local route.
+while IFS='|' read -r preference mode expected; do
+  OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$LIB" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
+  assert_eq "$OUT" "$expected" "host grammar: $preference mode=$mode"
+done <<'ROWS'
+claude@claude-cloud:claude-opus-5-5:high|lane|0|1|claude@claude-cloud:claude-opus-5-5:high|||
+pi@/opt/daytona:github-copilot/gpt-6.1-sol:high|lane|0|1|pi@/opt/daytona:github-copilot/gpt-6.1-sol:high|||
+claude@claude-cloud:claude-opus-5-5:high||1|0|||claude@claude-cloud:claude-opus-5-5:high|claude@claude-cloud:claude-opus-5-5:high
+claude@:opus:high|lane|1|0|||claude@:opus:high|claude@:opus:high
+claude@cloud@local:opus:high|lane|1|0|||claude@cloud@local:opus:high|claude@cloud@local:opus:high
+claude@cloud;exec:opus:high|lane|1|0|||claude@cloud;exec:opus:high|claude@cloud;exec:opus:high
+ROWS
+# A bare word such as false is true inside [[ ... ]]. Each control keeps its
+# original condition but makes only that condition false.
+while IFS='|' read -r mutation preference mode old admitted; do
+  OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$LIB" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
+  assert_eq "$OUT" "1|0|||$preference|$preference" "control baseline: $mutation refuses $preference"
+  MUTANT="$(mutant_scripts "$mutation" lib/overseer-launch.sh)"
+  mutate_file "$MUTANT/lib/overseer-launch.sh" "$old" "( 0 == 1 && $old )"
+  OUT="$(env -i PATH="$PATH" "$BASH" "$TMP_ROOT/read" "$MUTANT/lib/overseer-launch.sh" "$preference" other "$mode" 2>"$TMP_ROOT/err")"
+  assert_eq "$OUT" "0|1|$admitted|||" "control: $mutation admits $preference"
+done <<'ROWS'
+host-grammar|claude@:opus:high|lane|! "$host" =~ ^[a-zA-Z0-9_./~-]+$|claude:opus:high
+overseer-host-refusal|claude@claude-cloud:opus:high||"${2:-}" != lane|claude@claude-cloud:opus:high
+ROWS
 for mutation in refusal model warning; do
   MUTANT="$(mutant_scripts "$mutation" lib/overseer-launch.sh)"
   case "$mutation" in
