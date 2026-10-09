@@ -76,10 +76,104 @@ cache_run() { # STATE POLICY COMMAND...
     REAL_DATE="$REAL_DATE" FAKE_TODAY="${FAKE_TODAY:-}" \
     LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude:$H/.eclaude" \
     ORCH_LANES_FETCH_CMD="$TMP_ROOT/fetch" FIXTURE_DIR="$FIXTURE_DIR" \
+    FETCH_LOG="$TMP_ROOT/fetch-log" FETCH_STATUS="${FETCH_STATUS:-200}" \
+    ORCH_LANES_TOKEN_CMD="$TMP_ROOT/token" ORCH_LANES_CLAUDE_CLIENT_ID=fixture-client TOKEN_LOG="$TMP_ROOT/token-log" \
     OVERSEE_WATCH_STATE_DIR="$state" ORCH_LANE_HOST="$PROVIDER" \
     LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts" LANE_HOST_STUB_LOG="$TMP_ROOT/provider-log" \
     "${policy[@]}" "$LANES" "$@")
 }
+
+# Credit values are from the cached usage body, independently of credentials.
+for body in "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.eclaude.json"; do
+  jq '.iguana_necktie = {limit_dollars: 50, used_dollars: 20, remaining_dollars: 30, resets_at: "2099-08-01T06:00:00Z", locked_reason: null}' "$body" > "$body.tmp"
+  mv "$body.tmp" "$body"
+done
+cat > "$TMP_ROOT/token" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'called\n' >> "$TOKEN_LOG"
+printf '400\n{}\n'
+STUB
+chmod +x "$TMP_ROOT/token"
+
+cache_only_observed() {
+  local fetched tokens providers
+  fetched="$(sed 's/^\.//' "$TMP_ROOT/fetch-log" | sort | paste -sd, -)"
+  tokens="$(grep -c . "$TMP_ROOT/token-log" || true)"
+  providers="$(grep -c accounts "$TMP_ROOT/provider-log" || true)"
+  printf '%s fetched=%s tokens=%s providers=%s' "$(jq -r '.[] | select(.alias == "claude") | [.status, (.credits.remaining_dollars | tostring), (.usage_age_s | if . == null then "null" else "number" end), (.session_5h_pct | tostring)] | join(":")' "$TMP_ROOT/out")" "${fetched:-none}" "$tokens" "$providers"
+}
+
+for row in 'fresh||ok:30:number:10' 'stale||unreachable:null:null:null' \
+  'widened|--max-age 900|ok:30:number:10' 'ttl-zero||unreachable:null:null:null' \
+  'reset||unreachable:null:null:null' 'refused||refused:null:number:null' \
+  'token-refused||refused:null:number:null' 'expired||ok:30:number:10' \
+  'missing-credentials||ok:30:number:10' 'absent||unreachable:null:null:null'; do
+  IFS='|' read -r name args expected <<<"$row"
+  state="$TMP_ROOT/cache-only-$name"
+  make_lane "$H" claude
+  cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+  policy=ORCH_LANES_USAGE_TTL=300
+  case "$name" in
+    stale|widened) age_usage_record "$state" "$H/.claude" 600 ;;
+    ttl-zero) policy=ORCH_LANES_USAGE_TTL=0 ;;
+    reset)
+      for record in "$state"/usage/*.json; do
+        jq '.usage.five_hour.resets_at = "2000-01-01T00:00:00Z"' "$record" > "$record.tmp"
+        mv "$record.tmp" "$record"
+      done ;;
+    refused|token-refused)
+      age_usage_record "$state" "$H/.claude" 600
+      FETCH_STATUS=403 cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+      if [[ "$name" == token-refused ]]; then
+        for record in "$state"/usage/*.json; do
+          jq '.refusal.endpoint = "token"' "$record" > "$record.tmp"
+          mv "$record.tmp" "$record"
+        done
+      fi ;;
+    expired) make_lane "$H" claude -3600 ;;
+    missing-credentials) rm -- "${H:?}/.claude/.credentials.json" ;;
+    absent) rm -- "${state:?}"/usage/*.json ;;
+  esac
+  : > "$TMP_ROOT/fetch-log"; : > "$TMP_ROOT/token-log"; : > "$TMP_ROOT/provider-log"
+  # args contains only the literal --max-age row above.
+  cache_run "$state" "$policy" list --cache-only --json $args > "$TMP_ROOT/out"
+  assert_eq "$(cache_only_observed)" "$expected fetched=none tokens=0 providers=0" "cache-only $name uses only its record"
+done
+make_lane "$H" claude
+
+# Each endpoint prevention rule has a control that reaches its own stub.
+original_lanes="$LANES"
+for rule in fetch token provider; do
+  state="$TMP_ROOT/cache-only-control-$rule-state"
+  cache_run "$state" '' list --local --json --no-cache > "$TMP_ROOT/out"
+  control_dir="$(mutant_scripts "cache-only-control-$rule" lanes)"
+  expected='ok:30:number:10 fetched=none tokens=0 providers=0'
+  case "$rule" in
+    fetch)
+      age_usage_record "$state" "$H/.claude" 600
+      mutate_file "$control_dir/lanes" 'if [[ "$CACHE_ONLY" == true ]]; then' 'if [[ "$CACHE_ONLY" == false ]]; then'
+      expected='unreachable:null:null:null fetched=none tokens=0 providers=0' ;;
+    token)
+      make_lane "$H" claude -3600
+      mutate_file "$control_dir/lanes" 'if [[ "$CACHE_ONLY" != true ]]; then' 'if [[ "$CACHE_ONLY" == true ]]; then' ;;
+    provider)
+      mutate_file "$control_dir/lanes" 'CACHE_ONLY=true; LOCAL_ONLY=true; shift' 'CACHE_ONLY=true; LOCAL_ONLY=false; shift' ;;
+  esac
+  LANES="$control_dir/lanes"
+  : > "$TMP_ROOT/fetch-log"; : > "$TMP_ROOT/token-log"; : > "$TMP_ROOT/provider-log"
+  cache_run "$state" ORCH_LANES_USAGE_TTL=300 list --cache-only --json > "$TMP_ROOT/out"
+  rc=0
+  ( FAIL=0; assert_eq "$(cache_only_observed)" "$expected" 'cache-only endpoints'; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/cache-only-control-$rule.log" || rc=$?
+  assert_eq "$rc" 1 "cache-only row rejects the $rule endpoint control"
+  case "$rule" in
+    fetch) assert_eq "$(grep -c . "$TMP_ROOT/fetch-log" || true)" 1 'fetch control reaches the stale account usage endpoint' ;;
+    token) assert_eq "$(grep -c . "$TMP_ROOT/token-log" || true)" 1 'token control reaches the expired account token endpoint' ;;
+    provider) assert_eq "$(grep -c accounts "$TMP_ROOT/provider-log" || true)" 1 'provider control reaches the accounts endpoint' ;;
+  esac
+  LANES="$original_lanes"
+  make_lane "$H" claude
+done
 
 for row in 'exclude|ORCH_LANE_EXCLUDE=claude|0' 'retire|ORCH_LANE_RETIRE=claude=2000-01-01|1'; do
   IFS='|' read -r name policy retired <<<"$row"

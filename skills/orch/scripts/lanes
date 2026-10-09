@@ -13,7 +13,7 @@
 # them.
 #
 # Usage:
-#   lanes list [--harness claude|codex|copilot|all] [--local] [--no-cache] [--json]
+#   lanes list [--harness claude|codex|copilot|all] [--local] [--cache-only] [--no-cache] [--json]
 #   lanes pick [--harness claude|codex|copilot|pi] [--max-pct N | --min-headroom-pct N]
 #              [--model NAME] [--binding-floor] [--exclude-lane DIR]
 #              [--for-overseer] [--no-cache] [--json]
@@ -27,7 +27,7 @@
 #
 #   list  Print every lane found, measured, with its live claim count and the
 #         age of its usage figure. A lane whose access token has expired is
-#         RENEWED first and then measured like any other, its record marked
+#         RENEWED first unless --cache-only is set, its record marked
 #         `refreshable`; one that cannot be renewed reports the status its
 #         refusal took, with the cause. Table by default, --json for the
 #         structured record; the table's last column, DETAIL, is the record's
@@ -39,7 +39,9 @@
 #         that threshold or its default. The verdict is the reading's, a wall
 #         that lifts at binding_resets_at; `burn_pct_per_lane_hour` and
 #         `projected_headroom_pct` beside it are the projection `pick` also
-#         drops a lane on.
+#         drops a lane on. Each record carries `retire_date`: the
+#         ORCH_LANE_RETIRE date as YYYY-MM-DD, past or future, or null where
+#         no entry names the account.
 #         A weekly wall oversee-watch recorded from a lane's harness banner
 #         (lib/account-wall.sh) holds that account's `weekly_pct` at 100 until
 #         the reset the banner stated, whatever the usage endpoint reads; a
@@ -450,11 +452,16 @@
 #                    figure's age, or no usable figure when either bound ends.
 #                    A live refusal still blocks a new request. A refresh
 #                    still takes the host-wide refresh lock.
+#   --cache-only     List from eligible cached usage or a live recorded refusal,
+#                    without usage requests, token renewal or provider accounts.
+#                    Implies --local. A cache miss reports `unreachable`, with
+#                    no windows, credits or usage age. --max-age still widens
+#                    the serve age; a TTL of 0 serves no cached figure.
 #   --max-age SECS   Serve a cached usage figure up to SECS old, for a caller
 #                    naming its own pass interval. It WIDENS
 #                    ORCH_LANES_USAGE_TTL and never narrows it, so a caller
 #                    passing nothing, or less than the TTL, keeps the TTL. A
-#                    TTL of 0 is never widened: every run still fetches.
+#                    TTL of 0 is never widened: no cached figure is served.
 #                    A consumed bucket reset ends eligibility before this age.
 #                    ORCH_LANES_USAGE_MAX_AGE is the same value as a setting.
 #   --json           Machine-readable output
@@ -531,7 +538,7 @@
 #                      which a cloud-session pick keeps (see `pick`). A
 #                      malformed pair is refused.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 300;
-#                      0 fetches every run). Keep it at least the longest watch
+#                      0 serves no cached figure). Keep it at least the longest watch
 #                      interval on the host — `oversee-watch --interval`
 #                      defaults to 240 — because a TTL under that interval has
 #                      every pass find the figure expired and fetch again. The
@@ -592,7 +599,7 @@
 # consumed bucket reset arrives first. Every overseer sharing that directory
 # polls an account at most once per age window, except for reset refreshes.
 # `usage_age_s` (the AGE column) is how old the figure is. Credentials are
-# still read every run: an expired token is renewed or reports its refusal,
+# read unless --cache-only is set: an expired token is renewed or reports its refusal,
 # whatever the cache holds. A fresh write keeps the displaced figure as
 # `prior`; lane records expose the binding bucket's rate and projected wall
 # after samples at least a minute apart, and none on credits
@@ -1457,7 +1464,7 @@ measure_copilot_pool() { # ALIAS HARNESS DIR WHY
 measure_lane() {
 	local harness="$1" dir="$2"
 	local alias creds status="ok" detail="" plan="" token="" account_id="" expires_ms=0 now_s
-	local refreshed=false refresh_out
+	local refreshed=false refresh_out refusal
 	lane_alias_for "$dir" silent; alias="$LANE_ALIAS"
 	now_s=$(date +%s)
 
@@ -1469,89 +1476,91 @@ measure_lane() {
 		emit_lane "$alias" "$harness" "$dir" "retired" "retired on $retire (ORCH_LANE_RETIRE)" "" '{}'
 		return
 	fi
-	if [[ "$harness" == pi ]]; then
-		measure_copilot_pool "$alias" pi "$dir" "no Copilot login is read for a Pi root"
-		return
-	fi
-	if [[ "$harness" == copilot ]]; then
-		if ! copilot_credits_token "$dir"; then
-			measure_copilot_pool "$alias" copilot "$dir" "copilot login unread: $COPILOT_CREDITS_REASON in $COPILOT_CREDITS_WHERE"
+	if [[ "$CACHE_ONLY" != true ]]; then
+		if [[ "$harness" == pi ]]; then
+			measure_copilot_pool "$alias" pi "$dir" "no Copilot login is read for a Pi root"
 			return
 		fi
-		token="$COPILOT_CREDITS_TOKEN"
-	else
-		if [[ "$harness" == "claude" ]]; then creds="$dir/.credentials.json"; else creds="$dir/auth.json"; fi
-
-		if [[ ! -f "$creds" ]]; then
-			emit_lane "$alias" "$harness" "$dir" "no_credentials" "no credential file at $creds" "" '{}'
-			return
-		fi
-		if ! jq -e . "$creds" >/dev/null 2>&1; then
-			emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
-			return
-		fi
-		# `claude auth status` exposes current account authentication, but its
-		# documented JSON has no refresh-expiry timestamp. /status is an
-		# interactive view. Neither supplies this chooser's exact expiry read.
-		# Read the stored refreshTokenExpiresAt here: a live access token and
-		# usage room can survive the refresh login's end. An absent timestamp
-		# stays unmeasured; it does not prove expiry.
-		# https://code.claude.com/docs/en/cli-reference
-		# https://code.claude.com/docs/en/authentication#renew-an-expiring-login
-		if [[ "$harness" == claude ]]; then
-			local refresh_expiry
-			refresh_expiry="$(jq -r '.claudeAiOauth.refreshTokenExpiresAt // 0' "$creds")" || return 1
-			if token_expired "$refresh_expiry" "$now_s"; then
-				emit_lane "$alias" "$harness" "$dir" expired "refresh token expired; sign in again" "" '{}'
+		if [[ "$harness" == copilot ]]; then
+			if ! copilot_credits_token "$dir"; then
+				measure_copilot_pool "$alias" copilot "$dir" "copilot login unread: $COPILOT_CREDITS_REASON in $COPILOT_CREDITS_WHERE"
 				return
 			fi
+			token="$COPILOT_CREDITS_TOKEN"
+		else
+			if [[ "$harness" == "claude" ]]; then creds="$dir/.credentials.json"; else creds="$dir/auth.json"; fi
+
+			if [[ ! -f "$creds" ]]; then
+				emit_lane "$alias" "$harness" "$dir" "no_credentials" "no credential file at $creds" "" '{}'
+				return
+			fi
+			if ! jq -e . "$creds" >/dev/null 2>&1; then
+				emit_lane "$alias" "$harness" "$dir" "error" "credential file is not valid JSON" "" '{}'
+				return
+			fi
+			# `claude auth status` exposes current account authentication, but its
+			# documented JSON has no refresh-expiry timestamp. /status is an
+			# interactive view. Neither supplies this chooser's exact expiry read.
+			# Read the stored refreshTokenExpiresAt here: a live access token and
+			# usage room can survive the refresh login's end. An absent timestamp
+			# stays unmeasured; it does not prove expiry.
+			# https://code.claude.com/docs/en/cli-reference
+			# https://code.claude.com/docs/en/authentication#renew-an-expiring-login
+			if [[ "$harness" == claude ]]; then
+				local refresh_expiry
+				refresh_expiry="$(jq -r '.claudeAiOauth.refreshTokenExpiresAt // 0' "$creds")" || return 1
+				if token_expired "$refresh_expiry" "$now_s"; then
+					emit_lane "$alias" "$harness" "$dir" expired "refresh token expired; sign in again" "" '{}'
+					return
+				fi
+			fi
+			token="$(access_token "$harness" "$creds")"
+			expires_ms="$(token_expiry_ms "$harness" "$creds")"
 		fi
-		token="$(access_token "$harness" "$creds")"
-		expires_ms="$(token_expiry_ms "$harness" "$creds")"
-	fi
 
-	if [[ "$harness" == "claude" ]]; then
-		plan=$(jq -r 'try (.claudeAiOauth.subscriptionType // empty) catch empty' "$creds")
-	elif [[ "$harness" == codex ]]; then
-		account_id=$(jq -r 'try (.tokens.account_id // empty) catch empty' "$creds")
-	fi
+		if [[ "$harness" == "claude" ]]; then
+			plan=$(jq -r 'try (.claudeAiOauth.subscriptionType // empty) catch empty' "$creds")
+		elif [[ "$harness" == codex ]]; then
+			account_id=$(jq -r 'try (.tokens.account_id // empty) catch empty' "$creds")
+		fi
 
-	if [[ -z "$token" ]]; then
-		emit_lane "$alias" "$harness" "$dir" "no_credentials" "no access token in $creds" "$plan" '{}'
-		return
-	fi
-
-	# An expired access token is renewed here, so the lane `pick` prints is one
-	# whose token is live — see the header. A renewal that cannot happen fails
-	# closed with the status its renewal function judged, naming its cause, and
-	# is never measured as `ok`. A Copilot lane states no expiry and never gets
-	# here.
-	local refusal
-	if token_expired "$expires_ms" "$now_s"; then
-		if refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
-			emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
+		if [[ -z "$token" ]]; then
+			emit_lane "$alias" "$harness" "$dir" "no_credentials" "no access token in $creds" "$plan" '{}'
 			return
 		fi
-		# At most one `claude --version` per measuring shell, and none at all on a
-		# run whose lanes all carry live tokens.
-		[[ "$harness" != claude || -n "$CLAUDE_TOKEN_UA" ]] || CLAUDE_TOKEN_UA="$(claude_token_ua)"
-		if ! refresh_out="$(renew_token "$harness" "$dir" "$creds")"; then
-			local head code retry
-			head="${refresh_out%%$'\n'*}"
-			read -r status code retry <<<"$head"
-			[[ "$code" != "-" ]] || code=""
-			[[ "$retry" != "-" ]] || retry=""
-			detail="access token expired and could not be renewed: ${refresh_out#*$'\n'}"
-			# Recorded only where the endpoint answered: a refusal this machine
-			# raised on its own posted nothing, so there is nothing to stop a
-			# later caller from posting.
-			[[ -z "$code" ]] ||
-				write_usage_refusal "$harness" "$dir" "$now_s" token "$status" "$code" "$detail" "$retry" || true
-			emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" '{}'
-			return
+
+		# An expired access token is renewed here, so the lane `pick` prints is one
+		# whose token is live — see the header. A renewal that cannot happen fails
+		# closed with the status its renewal function judged, naming its cause, and
+		# is never measured as `ok`. A Copilot lane states no expiry and never gets
+		# here.
+		if token_expired "$expires_ms" "$now_s"; then
+			if refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
+				emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
+				return
+			fi
+			# At most one `claude --version` per measuring shell, and none at all on a
+			# run whose lanes all carry live tokens.
+			[[ "$harness" != claude || -n "$CLAUDE_TOKEN_UA" ]] || CLAUDE_TOKEN_UA="$(claude_token_ua)"
+			if ! refresh_out="$(renew_token "$harness" "$dir" "$creds")"; then
+				local head code retry
+				head="${refresh_out%%$'\n'*}"
+				read -r status code retry <<<"$head"
+				[[ "$code" != "-" ]] || code=""
+				[[ "$retry" != "-" ]] || retry=""
+				detail="access token expired and could not be renewed: ${refresh_out#*$'\n'}"
+				# Recorded only where the endpoint answered: a refusal this machine
+				# raised on its own posted nothing, so there is nothing to stop a
+				# later caller from posting.
+				[[ -z "$code" ]] ||
+					write_usage_refusal "$harness" "$dir" "$now_s" token "$status" "$code" "$detail" "$retry" || true
+				emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" '{}'
+				return
+			fi
+			token="$refresh_out"
+			refreshed=true
 		fi
-		token="$refresh_out"
-		refreshed=true
+
 	fi
 
 	# Read BEFORE the host-wide lock, so a lane its record can answer never
@@ -1566,9 +1575,18 @@ measure_lane() {
 	local raw="" buckets age=null current_at="" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null" sample_claims=1
 	now_s="$(date +%s)"
 	if ! usage_from_record "$now_s"; then
-		usage_lock_take
-		refresh_lane_usage
-		usage_lock_release
+		if [[ "$CACHE_ONLY" == true ]]; then
+			if refusal="$(read_usage_refusal "$harness" "$dir" "$now_s" token)"; then
+				emit_refusal "$alias" "$harness" "$dir" "$plan" "$refusal"
+				return
+			fi
+			status=unreachable
+			detail="usage cache miss within $(usage_serve_max_age)s serve age (--cache-only)"
+		else
+			usage_lock_take
+			refresh_lane_usage
+			usage_lock_release
+		fi
 	fi
 	# An empty `raw` is a lane no figure answers, whose status, detail and age
 	# the record or the refresh set: it reports no windows.
@@ -2344,6 +2362,7 @@ emit_lane() {
 	# in the record itself so no listing stamps it afterwards, which cost the
 	# whole listing one jq pass whether or not a provider was configured.
 	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}" sample_claims="${13:-1}"
+	lane_retire_date "$dir" silent
 	[[ -n "$prior" ]] || prior='{}'
 	buckets="$(account_wall_buckets "$PROJECT_ROOT" "$dir" "$buckets")" || { buckets='{}' status=error detail="wall record unreadable"; }
 	# `null`, never 0, when the store could not be read: "we could not see the
@@ -2352,7 +2371,7 @@ emit_lane() {
 	[[ "$LANE_CLAIMS_RC" -ne 0 ]] || claims="$(account_claims "$dir")"
 	jq -nc \
 		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" \
-		--arg status "$status" --arg detail "$detail" --arg plan "$plan" \
+		--arg status "$status" --arg detail "$detail" --arg plan "$plan" --arg retire "$LANE_RETIRE_DATE" \
 		--argjson claims "$claims" --argjson age "$age" \
 		--argjson refreshable "$refreshable" \
 		--arg through "$through" --argjson b "$buckets" \
@@ -2367,6 +2386,7 @@ emit_lane() {
 		    alias: $alias,
 		    harness: $harness,
 		    config_dir: $dir,
+		    retire_date: (if $retire == "" then null else $retire end),
 		    measured_through: $through,
 		    status: $st,
 		    refreshable: $refreshable,
@@ -3415,6 +3435,7 @@ parse_argv() {
 	FOR_OVERSEER=false
 	PROJECTED=false
 	LOCAL_ONLY=false
+	CACHE_ONLY=false
 
 	SUB="${1:-}"
 	# A bare invocation names the commands and does nothing else, so it is one
@@ -3439,6 +3460,7 @@ parse_argv() {
 			--for-overseer) FOR_OVERSEER=true; shift ;;
 			--projected) PROJECTED=true; shift ;;
 			--local) LOCAL_ONLY=true; shift ;;
+			--cache-only) [[ "$SUB" == list ]] || die unknown-option "$@"; CACHE_ONLY=true; LOCAL_ONLY=true; shift ;;
 			--lane) need_val "$@"; LANE_ARG="$2"; shift 2 ;;
 			--lane=*) LANE_ARG="${1#--lane=}"; need_val --lane "$LANE_ARG"; shift ;;
 			--exclude-lane) need_val "$@"; EXCLUDE_LANE="$2"; shift 2 ;;
