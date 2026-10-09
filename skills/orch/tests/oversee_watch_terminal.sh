@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Surface: terminal close of parked/stopped records on each fleet interval.
 # Inputs: oversee-watch, lane-close, their scripts/lib dependencies, and the
-# watcher harness, oversee-cycle, and its GitHub timeline reader. Controls
+# watcher harness, oversee-cycle, its GitHub timeline reader, and
+# skills/linear/scripts/lib/issue-validation.sh, skills/orch/scripts/open-terminal
+# and skills/orch/scripts/lib/open-terminal-text.sh. Controls
 # disable interval cleanup, move merge recording after close, and couple
-# cycle recovery to provider-refusal suppression.
+# cycle recovery to provider-refusal suppression, and bypass the parked PR
+# and checklist protections. Tracker and PR fixtures drive production close.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/oversee-watch-harness.sh"
@@ -23,16 +26,31 @@ cat "$STUB_DIR/timeline.json"
 EOF
 chmod +x "$TMP_ROOT/terminal-watch/github/scripts/github.sh"
 mkdir -p "$TMP_ROOT/terminal-close/linear/scripts"
+ln -s "$REPO_ROOT/skills/linear/scripts/lib" "$TMP_ROOT/terminal-close/linear/scripts/lib"
 cat > "$TMP_ROOT/terminal-close/linear/scripts/linear.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$1 $2" == 'issues get' ]] || exit 2
 printf '%s\n' "$*" >> "$STUB_DIR/terminal-reads"
 [[ ! -f "$STUB_DIR/tracker-failed" ]] || exit 9
+if [[ -f "$STUB_DIR/terminal-payload" ]]; then cat "$STUB_DIR/terminal-payload"; exit 0; fi
 state="$(cat "$STUB_DIR/terminal-state")"
-jq -cn --arg state "$state" '{state_type:$state}'
+jq -cn --arg state "$state" --rawfile description "$STUB_DIR/description" '{state_type:$state,description:$description}'
 EOF
 chmod +x "$TMP_ROOT/terminal-close/linear/scripts/linear.sh"
+mv -- "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/gh-watch"
+cat > "$TMP_ROOT/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-} ${2:-}" == 'pr view' ]]; then
+  printf '%s\n' "$*" >> "$STUB_DIR/gh.calls"
+  [[ ! -f "$STUB_DIR/pr-read-failed" ]] || exit 9
+  cat "$STUB_DIR/pr-state"
+  exit 0
+fi
+exec "${0%/*}/gh-watch" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/gh"
 cat > "$CLOSE_SCRIPTS/lane-mail" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -62,21 +80,62 @@ terminal_case() { # NAME RECORD_STATUS TRACKER_STATE
   mkdir -p "$STUB_DIR/fleet" "$STUB_DIR/remote"
   : > "$STUB_DIR/host.log"
   : > "$STUB_DIR/terminal-mail"
+  : > "$STUB_DIR/timeline-reads"
   printf '%s\n' "$3" > "$STUB_DIR/terminal-state"
+  printf '\n' > "$STUB_DIR/description"
+  printf 'CLOSED\n' > "$STUB_DIR/pr-state"
   jq -cn --arg status "$2" --arg host "$FIXTURE_HOST" \
     '{triaged:[],lanes:[{item:"KEN-1",tracker:"linear",repo:"owner/repo",harness:"codex",window:null,tier:null,
       host:$host,mail_root:"/srv/lane/ken-1",status:$status,
-      parked:(if $status == "parked" then {pr:1,repo:"owner/repo"} else null end)}]}' \
+      parked:(if $status == "parked" then {pr:1,repo:"owner/repo",head:"head",at:"2026-10-09T00:00:00Z"} else null end)}]}' \
     > "$STUB_DIR/fleet/workflow-state-oversee.json"
 }
-terminal_run() { # [WATCH_BIN]
+terminal_run() { # [WATCH_BIN] [CLOSE_BIN]
   rc=0
   WATCH_BIN="${1:-$TERMINAL_WATCH}" run_watch \
-    OVERSEE_WATCH_LANE_CLOSE="$CLOSE_SCRIPTS/lane-close" \
+    OVERSEE_WATCH_LANE_CLOSE="${2:-$CLOSE_SCRIPTS/lane-close}" \
     OVERSEE_WATCH_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state" \
     ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_DIR="$STUB_DIR/remote" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" -- --max-loops 1 \
     --state "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/out" 2> "$STUB_DIR/err" || rc=$?
+}
+terminal_conditional_run() { # [CLOSE_BIN] [MODE]
+  rc=0
+  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+    env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
+      STUB_DIR="$STUB_DIR" REAL_LANE_HOST="$REPO_ROOT/skills/orch/scripts/lane-host" \
+      ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_DIR="$STUB_DIR/remote" \
+      LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+      "${1:-$CLOSE_SCRIPTS/lane-close}" --state-dir "$STUB_DIR/fleet" \
+      "${2:---if-terminal}" KEN-1) > "$STUB_DIR/out" 2> "$STUB_DIR/err" || rc=$?
+}
+# Execute the shipped confirmed-start/create path with a failed provider create.
+terminal_recovery_run() { # [OPEN_TERMINAL]
+  python3 - "${1:-$REPO_ROOT/skills/orch/scripts/open-terminal}" "$STUB_DIR/recovery.sh" <<'PYRECOVERY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+owner_start = source.index("UNPARK_JQ='")
+owner_end = source.index('\n\n', owner_start)
+start = source.index('  if [[ "$parked_rc" -eq 0 ]]; then')
+end = source.index('  # Re-assert the configured symlinks', start)
+Path(sys.argv[2]).write_text(source[owner_start:owner_end] + '\nfor item in KEN-1; do\n' + source[start:end] + '\ndone\n')
+PYRECOVERY
+  recovery_rc=0
+  (
+    export STUB_DIR ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_DIR="$STUB_DIR/remote" LANE_HOST_STUB_LOG="$STUB_DIR/host.log"
+    WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
+    WORKFLOW_STATE_ARGS=(--state-dir "$STUB_DIR/fleet")
+    source "$REPO_ROOT/skills/orch/scripts/lib/open-terminal-text.sh"
+    host_transport() {
+      if [[ "$1" == create ]]; then printf 'fixture-provider: create-failed item=KEN-1\n' >&2; return 1; fi
+      "$REPO_ROOT/skills/orch/scripts/lane-host" "$@"
+    }
+    parked_rc=0 wt_id=KEN-1 LANE_HOST="$FIXTURE_HOST" RELAUNCH=true repo=owner/repo HARNESS=codex LANE_ENV=
+    keep_tree=false host_line= create_rc=0 skipped=0 failed=0 LANE_HOST_BUSY_EXIT=69 WORKTREE_REUSE_UNREBASED_EXIT=76
+    source "$STUB_DIR/recovery.sh"
+    [[ "$failed" -eq 0 ]]
+  ) > "$STUB_DIR/recovery.out" 2> "$STUB_DIR/recovery.err" || recovery_rc=$?
 }
 terminal_result() {
   printf 'rc=%s status=%s close=%s mail=%s closed=%s refused=%s' "$rc" \
@@ -92,6 +151,7 @@ terminal_busy() {
   printf '1\n' > "$STUB_DIR/prwatch.rc"
 }
 terminal_merged() {
+  printf 'MERGED\n' > "$STUB_DIR/pr-state"
   printf '[{"number":1,"headRefName":"ken-1","mergedAt":"2026-10-08T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
   jq -n '{pr:1,repo:"owner/repo",state:"MERGED",merge_commit:"fixture-merge",
     stamps:{first_commit:null,created:null,gate_met:null,ci_green:null,armed:null,queued:null,
@@ -139,6 +199,304 @@ for status in parked stopped; do
     fi
   done
 done
+
+# The integration's Done state does not prove that merge close-out ran.
+# The watch must pass open boxes through its existing parked-merged route.
+while IFS='|' read -r name status checkbox expected; do
+  terminal_case "checklist_$name" "$status" completed
+  terminal_busy
+  terminal_merged
+  printf '## Done when\n\n%s\n' "$checkbox" > "$STUB_DIR/description"
+  terminal_run
+  assert_eq "$(terminal_result) events=$(terminal_events)" "$expected" \
+    "$name: merge dispatch and terminal close use the same checklist judgement" "$STUB_DIR/err"
+done <<'EOF'
+branch_open|parked|- [ ] Record branch proof|rc=0 status=parked close=0 mail=0 closed=0 refused=0 events=merged,parked-merged,pr-watch
+post_merge_open|parked|- [ ] Post-merge: Read health; Where: service; Why after merge: needs deployment; Deadline: 2026-10-10T00:00:00Z|rc=0 status=parked close=0 mail=0 closed=0 refused=0 events=merged,parked-merged,pr-watch
+checked|parked|- [x] Record branch proof|rc=0 status=done close=1 mail=0 closed=1 refused=0 events=merged,lane-closed,pr-watch
+empty|parked||rc=0 status=done close=1 mail=0 closed=1 refused=0 events=merged,lane-closed,pr-watch
+failed_relaunch|stopped|- [ ] Record branch proof|rc=0 status=stopped close=0 mail=0 closed=0 refused=0 events=merged,pr-watch
+recovered_relaunch|stopped|- [x] Record branch proof|rc=0 status=done close=1 mail=0 closed=1 refused=0 events=merged,lane-closed,pr-watch
+empty_stopped|stopped||rc=0 status=done close=1 mail=0 closed=1 refused=0 events=merged,lane-closed,pr-watch
+EOF
+
+terminal_case checklist_repeat parked completed
+terminal_merged
+printf '## Done when\n- [ ] Record branch proof\n' > "$STUB_DIR/description"
+terminal_run
+terminal_run
+assert_eq "$(terminal_result) events=$(terminal_events)" \
+  'rc=0 status=parked close=0 mail=0 closed=0 refused=0 events=parked-merged,heartbeat' \
+  'a Done item with an open box repeats the existing merge hand-off on heartbeat' "$STUB_DIR/err"
+printf '## Done when\n- [x] Record branch proof\n' > "$STUB_DIR/description"
+terminal_run
+assert_eq "$(terminal_result) events=$(terminal_events)" \
+  'rc=0 status=done close=1 mail=0 closed=1 refused=0 events=lane-closed' \
+  'ticking the final box permits the existing terminal close' "$STUB_DIR/err"
+
+# open-terminal unpark drops parked metadata after start, before create.
+# Failed create leaves this stopped record for the next watch pass.
+terminal_case stopped_recovery stopped completed
+printf '## Done when\n- [ ] Record branch proof\n' > "$STUB_DIR/description"
+terminal_run
+assert_eq "$(terminal_result) parked=$(jq -r '.lanes[0].parked' "$STUB_DIR/fleet/workflow-state-oversee.json")" \
+  'rc=0 status=stopped close=0 mail=0 closed=0 refused=0 parked=null' \
+  'failed relaunch keeps the stopped Done record without parked metadata' "$STUB_DIR/err"
+assert_eq "$(awk '/^pr view / {n++} END {print n+0}' "$STUB_DIR/gh.calls")" 0 \
+  'stopped recovery reads the checklist without a parked PR read'
+printf '## Done when\n- [x] Record branch proof\n' > "$STUB_DIR/description"
+terminal_run
+assert_eq "$(terminal_result)" 'rc=0 status=done close=1 mail=0 closed=1 refused=0' \
+  'the final box permits close after stopped recovery' "$STUB_DIR/err"
+
+for state in completed canceled; do
+  terminal_case "open_pr_$state" parked "$state"
+  terminal_busy
+  printf 'OPEN\n' > "$STUB_DIR/pr-state"
+  printf '## Done when\n- [x] Record branch proof\n' > "$STUB_DIR/description"
+  terminal_run
+  assert_eq "$(terminal_result) events=$(terminal_events)" \
+    'rc=0 status=parked close=0 mail=0 closed=0 refused=0 events=pr-watch' \
+    "$state: an open or queued recorded PR keeps the lane despite a terminal tracker item" "$STUB_DIR/err"
+done
+
+for failure in pr-read-failed unknown-state; do
+  terminal_case "$failure" parked completed
+  if [[ "$failure" == pr-read-failed ]]; then touch "$STUB_DIR/pr-read-failed";
+  else printf 'UNKNOWN\n' > "$STUB_DIR/pr-state"; fi
+  terminal_run
+  assert_eq "$(terminal_result)" 'rc=2 status=parked close=0 mail=0 closed=0 refused=0' \
+    "$failure: unavailable PR evidence cannot authorize a terminal close" "$STUB_DIR/err"
+done
+
+BOX_CONTROL="$(mutant_scripts terminal-box-control/orch lane-close)/lane-close" || exit 1
+ln -s "$TMP_ROOT/terminal-close/linear" "$TMP_ROOT/terminal-box-control/linear"
+BOX_GUARD='          if [[ "$TERMINAL_MODE" != close && ( "$status" == parked || "$status" == stopped || "$pending_pr" != null ) ]]; then'
+mutate_file "$BOX_CONTROL" "$BOX_GUARD" '          if false; then'
+terminal_case box_control parked completed
+terminal_busy
+terminal_merged
+printf '## Done when\n- [ ] Record branch proof\n' > "$STUB_DIR/description"
+terminal_run "$TERMINAL_WATCH" "$BOX_CONTROL"
+assert_eq "$(terminal_result) events=$(terminal_events)" \
+  'rc=0 status=done close=1 mail=0 closed=1 refused=0 events=merged,lane-closed,pr-watch' \
+  'control: skipping the box read closes the Done item with unfinished work' "$STUB_DIR/err"
+
+PR_CONTROL="$(mutant_scripts terminal-pr-control/orch lane-close)/lane-close" || exit 1
+ln -s "$TMP_ROOT/terminal-close/linear" "$TMP_ROOT/terminal-pr-control/linear"
+mutate_file "$PR_CONTROL" '      OPEN) return 1 ;;' '      OPEN) : ;;'
+terminal_case open_pr_control parked completed
+terminal_busy
+printf 'OPEN\n' > "$STUB_DIR/pr-state"
+printf '## Done when\n- [x] Record branch proof\n' > "$STUB_DIR/description"
+terminal_run "$TERMINAL_WATCH" "$PR_CONTROL"
+assert_eq "$(terminal_result) events=$(terminal_events)" \
+  'rc=0 status=done close=1 mail=0 closed=1 refused=0 events=lane-closed,pr-watch' \
+  'control: bypassing the recorded PR check closes the lane while the PR remains open' "$STUB_DIR/err"
+
+# The watch probes --terminal-state before it can reach --if-terminal.
+# Call the latter directly to prove its second read still protects the lane.
+while IFS='|' read -r name status pr checkbox expected_rc expected_status expected_close; do
+  terminal_case "conditional_$name" "$status" completed
+  printf '%s\n' "$pr" > "$STUB_DIR/pr-state"
+  printf '## Done when\n%s\n' "$checkbox" > "$STUB_DIR/description"
+  terminal_conditional_run
+  assert_eq "$(terminal_result)" \
+    "rc=$expected_rc status=$expected_status close=$expected_close mail=0 closed=0 refused=0" \
+    "$name: direct conditional close rechecks the terminal evidence" "$STUB_DIR/err"
+  if [[ "$expected_rc" == 4 ]]; then
+    # oversee-watch consumes this machine-read refusal.
+    assert_eq "$(awk '/^lane-close: item-open item=KEN-1$/ {n++} END {print n+0}' "$STUB_DIR/out")" 1 \
+      "$name: conditional refusal retains the item-open category"
+  fi
+done <<'EOF'
+parked_box|parked|MERGED|- [ ] Record branch proof|4|parked|0
+stopped_box|stopped|CLOSED|- [ ] Record branch proof|4|stopped|0
+open_pr|parked|OPEN|- [x] Record branch proof|4|parked|0
+parked_checked|parked|MERGED|- [x] Record branch proof|0|done|1
+stopped_checked|stopped|CLOSED|- [x] Record branch proof|0|done|1
+EOF
+
+IF_BOX_CONTROL="$(mutant_scripts terminal-if-box-control/orch lane-close)/lane-close" || exit 1
+ln -s "$TMP_ROOT/terminal-close/linear" "$TMP_ROOT/terminal-if-box-control/linear"
+mutate_file "$IF_BOX_CONTROL" "$BOX_GUARD" \
+  '          if [[ "$TERMINAL_MODE" != close && "$TERMINAL_MODE" != if && ( "$status" == parked || "$status" == stopped || "$pending_pr" != null ) ]]; then'
+IF_PR_CONTROL="$(mutant_scripts terminal-if-pr-control/orch lane-close)/lane-close" || exit 1
+ln -s "$TMP_ROOT/terminal-close/linear" "$TMP_ROOT/terminal-if-pr-control/linear"
+mutate_file "$IF_PR_CONTROL" '      OPEN) return 1 ;;' '      OPEN) [[ "$TERMINAL_MODE" == if ]] || return 1 ;;'
+for rule in box pr; do
+  terminal_case "conditional_control_$rule" parked completed
+  control="$IF_BOX_CONTROL"
+  printf '## Done when\n- [ ] Record branch proof\n' > "$STUB_DIR/description"
+  if [[ "$rule" == pr ]]; then
+    control="$IF_PR_CONTROL"
+    printf 'OPEN\n' > "$STUB_DIR/pr-state"
+    printf '## Done when\n- [x] Record branch proof\n' > "$STUB_DIR/description"
+  fi
+  terminal_conditional_run "$control" --terminal-state
+  assert_eq "rc=$rc state=$(cat "$STUB_DIR/out")" 'rc=0 state=open' \
+    "control: the $rule bypass leaves the state probe protected" "$STUB_DIR/err"
+  terminal_conditional_run "$control"
+  assert_eq "$(terminal_result)" 'rc=0 status=done close=1 mail=0 closed=0 refused=0' \
+    "control: an if-only $rule bypass fails the direct conditional refusal" "$STUB_DIR/err"
+done
+
+STOPPED_CONTROL="$(mutant_scripts terminal-stopped-control/orch lane-close)/lane-close" || exit 1
+ln -s "$TMP_ROOT/terminal-close/linear" "$TMP_ROOT/terminal-stopped-control/linear"
+mutate_file "$STOPPED_CONTROL" "$BOX_GUARD" '          if [[ "$TERMINAL_MODE" != close && "$status" == parked ]]; then'
+terminal_case stopped_control stopped completed
+printf '## Done when\n- [ ] Record branch proof\n' > "$STUB_DIR/description"
+terminal_run "$TERMINAL_WATCH" "$STOPPED_CONTROL"
+assert_eq "$(terminal_result)" 'rc=0 status=done close=1 mail=0 closed=1 refused=0' \
+  'control: parked-only checklist protection closes the failed-relaunch record' "$STUB_DIR/err"
+
+# A partial parked record or incomplete installed Linear package cannot
+# supply permission to close. A malformed tracker payload cannot either.
+MISSING_PARSER="$(mutant_scripts terminal-missing-parser/orch lane-close)/lane-close" || exit 1
+mkdir -p "$TMP_ROOT/terminal-missing-parser/linear/scripts"
+ln -s "$TMP_ROOT/terminal-close/linear/scripts/linear.sh" "$TMP_ROOT/terminal-missing-parser/linear/scripts/linear.sh"
+FAILED_PARSER="$(mutant_scripts terminal-failed-parser/orch lane-close)/lane-close" || exit 1
+mkdir -p "$TMP_ROOT/terminal-failed-parser/linear/scripts/lib"
+ln -s "$TMP_ROOT/terminal-close/linear/scripts/linear.sh" "$TMP_ROOT/terminal-failed-parser/linear/scripts/linear.sh"
+printf 'done_when_parse() { return 9; }\n' > "$TMP_ROOT/terminal-failed-parser/linear/scripts/lib/issue-validation.sh"
+while IFS='|' read -r fault status cause; do
+  terminal_case "evidence_$fault" "$status" completed
+  close_bin="$CLOSE_SCRIPTS/lane-close"
+  case "$fault" in
+    missing_repo|missing_pr)
+      field="${fault#missing_}"
+      jq --arg field "$field" 'del(.lanes[0].parked[$field])' \
+        "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
+      mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json" ;;
+    pending_missing_repo|pending_missing_pr)
+      field="${fault#pending_missing_}"
+      jq --arg field "$field" '.lanes[0].pending_pr=({pr:1,repo:"owner/repo"} | del(.[$field]))' \
+        "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
+      mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json" ;;
+    missing_parser) close_bin="$MISSING_PARSER" ;;
+    failed_parser) close_bin="$FAILED_PARSER" ;;
+    malformed_description) printf '{"state_type":"completed","description":null}\n' > "$STUB_DIR/terminal-payload" ;;
+  esac
+  terminal_conditional_run "$close_bin"
+  assert_eq "$(terminal_result)" "rc=2 status=$status close=0 mail=0 closed=0 refused=0" \
+    "$status/$fault: missing evidence retains the record and provider" "$STUB_DIR/err"
+  assert_eq "$(awk -v cause="$cause" '$0 == "lane-close: tracker-read-failed item=KEN-1 tracker=linear source=given cause=" cause {n++} END {print n+0}' "$STUB_DIR/err")" 1 \
+    "$status/$fault: the refusal names its structured cause" "$STUB_DIR/err"
+done <<'EOF'
+missing_repo|parked|parked-record-invalid
+missing_pr|parked|parked-record-invalid
+pending_missing_repo|stopped|parked-record-invalid
+pending_missing_pr|stopped|parked-record-invalid
+missing_parser|parked|checklist-missing
+failed_parser|parked|checklist-unparsed
+malformed_description|parked|checklist-unparsed
+missing_parser|stopped|checklist-missing
+failed_parser|stopped|checklist-unparsed
+malformed_description|stopped|checklist-unparsed
+EOF
+
+# A PR-watch recovery starts before merge. Checked Done boxes do not end
+# its PR wait. The same owner must retain that wait after create fails.
+while IFS='|' read -r name pr state checkbox status mode expected_rc expected_status expected_close; do
+  terminal_case "pending_$name" parked "$state"
+  printf '## Done when\n%s\n' "$checkbox" > "$STUB_DIR/description"
+  terminal_recovery_run
+  assert_eq "rc=$recovery_rc status=$(jq -r '.lanes[0].status' "$STUB_DIR/fleet/workflow-state-oversee.json") parked=$(jq -r '.lanes[0].parked' "$STUB_DIR/fleet/workflow-state-oversee.json") pending=$(jq -c '.lanes[0].pending_pr | {pr,repo}' "$STUB_DIR/fleet/workflow-state-oversee.json")" \
+    'rc=1 status=stopped parked=null pending={"pr":1,"repo":"owner/repo"}' \
+    "$name: confirmed start retains PR identity after failed create" "$STUB_DIR/recovery.err"
+  assert_eq "$(awk '/^open-terminal: host-create-failed item=KEN-1 exit=1$/ {n++} END {print n+0}' "$STUB_DIR/recovery.err")" 1 \
+    "$name: the failed-create machine diagnostic remains visible" "$STUB_DIR/recovery.err"
+  if [[ "$status" == running ]]; then
+    jq '.lanes[0].status="running"' "$STUB_DIR/fleet/workflow-state-oversee.json" > "$STUB_DIR/fleet/next"
+    mv -- "$STUB_DIR/fleet/next" "$STUB_DIR/fleet/workflow-state-oversee.json"
+  fi
+  printf '%s\n' "$pr" > "$STUB_DIR/pr-state"
+  if [[ "$mode" == watch && "$pr" == MERGED ]]; then
+    terminal_merged
+    if [[ "$name" == merged_unrelated_watch ]]; then
+      printf '[{"number":9,"headRefName":"ken-1","mergedAt":"2026-10-09T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+    fi
+  fi
+  case "$mode" in
+    state) terminal_conditional_run "$CLOSE_SCRIPTS/lane-close" --terminal-state ;;
+    if) terminal_conditional_run ;;
+    watch) terminal_run ;;
+  esac
+  expected_events=0
+  [[ "$mode" != watch ]] || expected_events="$expected_close"
+  assert_eq "$(terminal_result)" \
+    "rc=$expected_rc status=$expected_status close=$expected_close mail=0 closed=$expected_events refused=0" \
+    "$name: retained PR identity governs terminal and conditional close" "$STUB_DIR/err"
+  if [[ "$mode" == state ]]; then
+    expected_state=open
+    [[ "$pr" == OPEN || "$checkbox" == '- [ ] Record proof' ]] || expected_state=completed
+    assert_eq "$(cat "$STUB_DIR/out")" "$expected_state" "$name: the terminal state is machine-readable"
+  elif [[ "$expected_rc" == 4 ]]; then
+    assert_eq "$(awk '/^lane-close: item-open item=KEN-1$/ {n++} END {print n+0}' "$STUB_DIR/out")" 1 \
+      "$name: direct close keeps the existing item-open refusal"
+  fi
+  if [[ "$mode" == watch && "$pr" == MERGED ]]; then
+    expected_cycle=1
+    [[ "$name" != merged_unrelated_watch ]] || expected_cycle=none
+    assert_eq "$(cat "$STUB_DIR/cycle-at-close")" "$expected_cycle" \
+      "$name: merge recording uses the retained PR identity" "$STUB_DIR/err"
+    if [[ "$name" == merged_unrelated_watch ]]; then
+      assert_eq "$(awk '$1 == "pr-timeline" && $2 == "9" {n++} END {print n+0}' "$STUB_DIR/timeline-reads")" 0 \
+        "$name: no unrelated PR timeline is read"
+    fi
+  fi
+  if [[ "$expected_status" == done ]]; then
+    assert_eq "$(jq -r '.lanes[0] | has("pending_pr") or has("parked")' "$STUB_DIR/fleet/workflow-state-oversee.json")" false \
+      "$name: successful final close releases the PR identity"
+  fi
+done <<'EOF'
+open_probe|OPEN|completed|- [x] Record proof|stopped|state|0|stopped|0
+open_conditional|OPEN|completed|- [x] Record proof|stopped|if|4|stopped|0
+open_watch|OPEN|completed|- [x] Record proof|stopped|watch|0|stopped|0
+open_canceled|OPEN|canceled||stopped|if|4|stopped|0
+merged_probe|MERGED|completed|- [x] Record proof|stopped|state|0|stopped|0
+merged_conditional|MERGED|completed|- [x] Record proof|stopped|if|0|done|1
+merged_watch|MERGED|completed|- [x] Record proof|stopped|watch|0|done|1
+merged_unrelated_watch|MERGED|completed|- [x] Record proof|stopped|watch|0|done|1
+closed_conditional|CLOSED|completed|- [x] Record proof|stopped|if|0|done|1
+merged_unfinished|MERGED|completed|- [ ] Record proof|stopped|if|4|stopped|0
+running_open|OPEN|completed|- [x] Record proof|running|if|4|running|0
+running_unfinished|MERGED|completed|- [ ] Record proof|running|if|4|running|0
+EOF
+
+LOST_IDENTITY="$(mutant_scripts terminal-lost-identity/orch open-terminal)/open-terminal" || exit 1
+mutate_file "$LOST_IDENTITY" '.pending_pr = (.parked | {pr, repo, head})' '.'
+PARKED_PR_CONTROL="$(mutant_scripts terminal-parked-pr-control/orch lane-close)/lane-close" || exit 1
+ln -s "$TMP_ROOT/terminal-close/linear" "$TMP_ROOT/terminal-parked-pr-control/linear"
+mutate_file "$PARKED_PR_CONTROL" 'elif .pending_pr != null then .pending_pr' 'elif .pending_pr != null then null'
+for owner in transfer read; do
+  terminal_case "pending_control_$owner" parked completed
+  printf 'OPEN\n' > "$STUB_DIR/pr-state"
+  printf '## Done when\n- [x] Record proof\n' > "$STUB_DIR/description"
+  if [[ "$owner" == transfer ]]; then
+    terminal_recovery_run "$LOST_IDENTITY"
+    close_bin="$CLOSE_SCRIPTS/lane-close"
+  else
+    terminal_recovery_run
+    close_bin="$PARKED_PR_CONTROL"
+  fi
+  terminal_conditional_run "$close_bin"
+  assert_eq "$(terminal_result)" 'rc=0 status=done close=1 mail=0 closed=0 refused=0' \
+    "control: lost identity at $owner closes the recovered lane with its PR still OPEN" "$STUB_DIR/err"
+done
+
+PENDING_BINDING_CONTROL="$(mutant_scripts terminal-pending-binding-control/orch oversee-watch)/oversee-watch" || exit 1
+ln -s "$TMP_ROOT/terminal-watch/github" "$TMP_ROOT/terminal-pending-binding-control/github"
+ln -s "$REPO_ROOT/skills/harness-ci" "$TMP_ROOT/terminal-pending-binding-control/harness-ci"
+mutate_file "$PENDING_BINDING_CONTROL" '(.parked // .pending_pr) | if .pr != null' '.parked | if .pr != null'
+terminal_case pending_binding_control parked completed
+printf '## Done when\n- [x] Record proof\n' > "$STUB_DIR/description"
+terminal_recovery_run
+terminal_merged
+printf '[{"number":9,"headRefName":"ken-1","mergedAt":"2026-10-09T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+terminal_run "$PENDING_BINDING_CONTROL"
+assert_eq "$(awk '$1 == "pr-timeline" && $2 == "9" {n++} END {print n+0}' "$STUB_DIR/timeline-reads")" 1 \
+  'control: dropping the pending binding reads an unrelated merged PR' "$STUB_DIR/err"
 
 for refusal in legacy_tier timeline; do
   terminal_case "cycle_refusal_$refusal" stopped completed
