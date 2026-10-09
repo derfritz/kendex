@@ -17,9 +17,12 @@ GG_MARK="# kendex-""guards-hook"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo 'pre-commit-world: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "pre-commit-world: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'pre-commit-world: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
+OUT_FILE="$TMP_ROOT/stdout"
 # Anything a fixture's own script writes when something runs it. Nothing
 # should: this hook defers or refuses, and never stands in.
 RAN_LOG="$TMP_ROOT/ran.log"
@@ -38,9 +41,10 @@ done
 run_hook() {
   local dir="$1" payload="$2"
   set +e
-  (cd "$dir" && env PATH="$NO_KENDEX_BIN" bash "$HOOK" <<<"$payload") >/dev/null 2>"$ERR_FILE"
+  (cd -- "$dir" && env -i HOME="$TMP_ROOT" PATH="$NO_KENDEX_BIN" GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$BASH" "$HOOK" <<<"$payload") >"$OUT_FILE" 2>"$ERR_FILE"
   rc=$?
   set -e
+  out="$(cat "$OUT_FILE")"
   err="$(cat "$ERR_FILE")"
   log="$(cat "$RAN_LOG")"
 }
@@ -71,6 +75,8 @@ new_repo() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir"
   git -C "$dir" init -q
+  git -C "$dir" config gc.auto 0
+  git -C "$dir" config maintenance.auto false
   # A script that announces itself if anything runs it. Nothing may.
   mkdir -p "$dir/.agents/skills/commit-guards/scripts"
   printf '#!/usr/bin/env bash\necho ran >>"%s"\n' "$RAN_LOG" >"$dir/.agents/skills/commit-guards/scripts/pre-commit"

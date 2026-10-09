@@ -1,0 +1,1 @@
+- Safety scoring treats literal shell case patterns as mentions and still reports bypass commands in arm bodies and other source languages.
