@@ -293,6 +293,12 @@ fn a_terminal_refusal_writes_no_first_run_record_or_terms() {
 
 fn cross_checkout_refusal(output: &Output, caller: &Path, target: &Path) -> bool {
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // Repo prints std's canonical path; fixture roots use the Windows
+    // reduction in paths::canonical. The caller must name the same directory.
+    let reported_caller = stderr
+        .split_once("; caller=")
+        .and_then(|(_, field)| field.split_once(';'))
+        .map(|(path, _)| Path::new(path));
     output.status.code() == Some(1)
         && output.stdout.is_empty()
         && stderr.lines().count() == 1
@@ -300,7 +306,10 @@ fn cross_checkout_refusal(output: &Output, caller: &Path, target: &Path) -> bool
             "worktree-project-write: target={};",
             target.display()
         ))
-        && stderr.contains(&format!("caller={};", caller.display()))
+        && reported_caller
+            .and_then(|path| kendex_core::paths::canonical(path).ok())
+            .zip(kendex_core::paths::canonical(caller).ok())
+            .is_some_and(|(actual, expected)| actual == expected)
 }
 
 #[test]
@@ -606,6 +615,18 @@ fn named_cross_checkout_writes_require_the_existing_override() {
             assert!(
                 cross_checkout_refusal(&output, &fixture.linked, &other),
                 "{args:?}: {output:?}"
+            );
+            let equivalent_caller = fixture
+                .linked
+                .join("..")
+                .join(fixture.linked.file_name().expect("caller directory"));
+            assert!(
+                cross_checkout_refusal(&output, &equivalent_caller, &other),
+                "caller identity must accept an equivalent spelling"
+            );
+            assert!(
+                !cross_checkout_refusal(&output, &fixture.main, &other),
+                "caller identity must reject another checkout"
             );
             assert_eq!(snapshot(&fixture.root), before, "named refusal wrote");
             // The override is the missing-input control for this refusal.
