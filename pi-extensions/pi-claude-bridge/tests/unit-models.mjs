@@ -52,6 +52,9 @@ describe("MODELS projection", () => {
 		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.name, "Claude Fable 5.1");
 		assert.equal(models.find((m) => m.id === "claude-fable-5-1")?.contextWindow, 1000000);
 		assert.equal(models.find((m) => m.id === "claude-opus-4-8")?.maxTokens, 128000);
+		assert.equal(models.find((m) => m.id === "claude-haiku-5-5")?.name, "Claude Haiku 5.5");
+		assert.equal(models.find((m) => m.id === "claude-haiku-5-5")?.contextWindow, 1000000);
+		assert.equal(models.find((m) => m.id === "claude-haiku-5-5")?.maxTokens, 128000);
 		assert.equal(models.find((m) => m.id === "claude-sonnet-5-5")?.name, "Claude Sonnet 5.5");
 		assert.equal(models.find((m) => m.id === "claude-sonnet-5-5")?.contextWindow, 1000000);
 		assert.equal(models.find((m) => m.id === "claude-sonnet-5-5")?.maxTokens, 128000);
