@@ -319,11 +319,156 @@ fn cross_checkout_refusal(output: &Output, caller: &Path, target: &Path) -> bool
     reason = "one writer table shares its refusal and own/global controls"
 )]
 fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_controls_pass() {
+    use std::io::Write as _;
+    use std::time::Instant;
     use test_util::lane::Entry;
+
+    // Direct stderr bypasses libtest capture so CI retains completed rows
+    // even if a later row reaches the job's timeout.
+    let report = |verb: &str, directory: &str, phase: &str, started: Instant| {
+        writeln!(
+            std::io::stderr().lock(),
+            "lane-refresh-row writer={verb} directory={} phase={phase} elapsed_seconds={:.6}",
+            if directory.is_empty() {
+                "root"
+            } else {
+                directory
+            },
+            started.elapsed().as_secs_f64(),
+        )
+        .expect("row timing stderr");
+    };
 
     // Claude Code creates linked worktrees below the main checkout's
     // project markers. Without nearer markers, the real project walk
     // selects that main checkout for every writing verb below.
+    // The table owns one neutral repository and caller. Every control
+    // restores all file bytes, directories, links and permissions before
+    // another row can inherit its state.
+    let table_started = Instant::now();
+    let mut fixture = world();
+    let caller = fixture.main.join(".claude/worktrees/caller");
+    fs::create_dir_all(caller.parent().expect("caller parent")).expect("worktree directory");
+    fs::remove_file(fixture.linked.join("kendex.toml")).expect("remove nearer marker");
+    fixture.git(
+        &fixture.main,
+        &[
+            "worktree",
+            "move",
+            fixture.linked.to_str().expect("fixture path"),
+            caller.to_str().expect("fixture path"),
+        ],
+    );
+    fixture.linked = caller.clone();
+    for directory in ["vendor", "bare"] {
+        // Git produces both nested repository forms once. Complete restoration
+        // keeps their project markers absent before every inherited refusal.
+        let mut clone = vec!["clone", "-q"];
+        if directory == "bare" {
+            clone.push("--bare");
+        }
+        clone.extend([fixture.main.to_str().expect("fixture path"), directory]);
+        fixture.git(&caller, &clone);
+    }
+    let catalog = fixture.root.join("catalog");
+    let reference = catalog.to_str().expect("catalog path");
+    let env = kendex_core::env::Env::host_rooted(&fixture.root);
+    let global = kendex_core::manifest::manifest_path(&env, &kendex_core::model::Scope::Global);
+    for manifest in [fixture.main.join("kendex.toml"), global] {
+        let contents = fs::read_to_string(&manifest).expect("fixture manifest");
+        fs::write(
+            &manifest,
+            format!(
+                "{contents}\n[sources.empty]\n{}\n",
+                test_util::source_path(&catalog)
+            ),
+        )
+        .expect("empty source");
+    }
+    let setup = kendex(
+        &fixture,
+        &fixture.main,
+        &["apply", "--scope", "all", "--yes", "--leave"],
+    );
+    assert!(setup.status.success(), "writer-table setup: {setup:?}");
+    for root in [&fixture.main, &fixture.root] {
+        let borrowed = root.join(".claude/skills/borrowed");
+        fs::create_dir_all(&borrowed).expect("adopt fixture");
+        fs::write(
+            borrowed.join("SKILL.md"),
+            "---\nname: borrowed\ndescription: Fixture\n---\nBody.\n",
+        )
+        .expect("adopt bytes");
+    }
+
+    let independent = fixture.root.join("independent.git");
+    fixture.git(
+        &fixture.root,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            fixture.main.to_str().expect("fixture path"),
+            independent.to_str().expect("fixture path"),
+        ],
+    );
+
+    // Each allowed writer changes declarations, installed files or
+    // home state. Restore the whole owned fixture before its next
+    // control so no nearer project or prior write can mask refusal.
+    let baseline = snapshot(&fixture.root);
+    let permissions: std::collections::BTreeMap<_, _> = baseline
+        .iter()
+        .filter(|(_, entry)| matches!(entry, Entry::File(_)))
+        .map(|(path, _)| {
+            (
+                path.clone(),
+                fs::metadata(fixture.root.join(path))
+                    .expect("baseline file metadata")
+                    .permissions(),
+            )
+        })
+        .collect();
+    let restore = || {
+        let current = snapshot(&fixture.root);
+        for (relative, entry) in current.iter().rev() {
+            if baseline.get(relative) == Some(entry)
+                || matches!(
+                    (entry, baseline.get(relative)),
+                    (Entry::File(_), Some(Entry::File(_)))
+                )
+            {
+                continue;
+            }
+            let path = fixture.root.join(relative);
+            if matches!(entry, Entry::Directory) || (cfg!(windows) && path.is_dir()) {
+                fs::remove_dir(&path).expect("remove control directory");
+            } else {
+                fs::remove_file(&path).expect("remove control file");
+            }
+        }
+        for (relative, entry) in &baseline {
+            let path = fixture.root.join(relative);
+            match entry {
+                Entry::Directory => {
+                    fs::create_dir_all(&path).expect("restore fixture directory");
+                }
+                Entry::File(bytes) => {
+                    if current.get(relative) != Some(entry) {
+                        fs::write(&path, bytes).expect("restore fixture file");
+                    }
+                    fs::set_permissions(&path, permissions[relative].clone())
+                        .expect("restore file permissions");
+                }
+                Entry::Link(_) => {
+                    assert_eq!(current.get(relative), Some(entry), "fixture link changed");
+                }
+            }
+        }
+        assert_eq!(snapshot(&fixture.root), baseline, "control state leaked");
+    };
+    report("table", "", "setup", table_started);
+
     for verb in [
         "refresh",
         "apply",
@@ -344,63 +489,10 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
         "unsubscribe",
     ] {
         for directory in ["", "vendor", "bare"] {
-            let mut fixture = world();
-            let caller = fixture.main.join(".claude/worktrees/caller");
-            fs::create_dir_all(caller.parent().expect("caller parent"))
-                .expect("worktree directory");
-            fs::remove_file(fixture.linked.join("kendex.toml")).expect("remove nearer marker");
-            fixture.git(
-                &fixture.main,
-                &[
-                    "worktree",
-                    "move",
-                    fixture.linked.to_str().expect("fixture path"),
-                    caller.to_str().expect("fixture path"),
-                ],
-            );
-            fixture.linked = caller.clone();
+            let row_started = Instant::now();
+            report(verb, directory, "start", row_started);
             let inherited = caller.join(directory);
-            if matches!(directory, "vendor" | "bare") {
-                // Git's clone --bare producer has no working tree. The
-                // enclosing linked checkout still owns this caller.
-                let mut clone = vec!["clone", "-q"];
-                if directory == "bare" {
-                    clone.push("--bare");
-                }
-                clone.extend([fixture.main.to_str().expect("fixture path"), directory]);
-                fixture.git(&caller, &clone);
-            }
-            let catalog = fixture.root.join("catalog");
-            let reference = catalog.to_str().expect("catalog path");
-            let env = kendex_core::env::Env::host_rooted(&fixture.root);
-            let global =
-                kendex_core::manifest::manifest_path(&env, &kendex_core::model::Scope::Global);
-            for manifest in [fixture.main.join("kendex.toml"), global] {
-                let contents = fs::read_to_string(&manifest).expect("fixture manifest");
-                fs::write(
-                    &manifest,
-                    format!(
-                        "{contents}\n[sources.empty]\n{}\n",
-                        test_util::source_path(&catalog)
-                    ),
-                )
-                .expect("empty source");
-            }
-            let setup = kendex(
-                &fixture,
-                &fixture.main,
-                &["apply", "--scope", "all", "--yes", "--leave"],
-            );
-            assert!(setup.status.success(), "setup {verb}: {setup:?}");
-            for root in [&fixture.main, &fixture.root] {
-                let borrowed = root.join(".claude/skills/borrowed");
-                fs::create_dir_all(&borrowed).expect("adopt fixture");
-                fs::write(
-                    borrowed.join("SKILL.md"),
-                    "---\nname: borrowed\ndescription: Fixture\n---\nBody.\n",
-                )
-                .expect("adopt bytes");
-            }
+            report(verb, directory, "setup", row_started);
             let args = match verb {
                 "refresh" | "apply" => vec![verb, "--yes", "--leave"],
                 "add" => vec![
@@ -474,81 +566,13 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                 }
             }
 
-            let independent = fixture.root.join("independent.git");
-            if directory == "bare" {
-                fixture.git(
-                    &fixture.root,
-                    &[
-                        "clone",
-                        "-q",
-                        "--bare",
-                        fixture.main.to_str().expect("fixture path"),
-                        independent.to_str().expect("fixture path"),
-                    ],
-                );
-            }
-
-            // Each allowed writer changes declarations, installed files or
-            // home state. Restore the whole owned fixture before its next
-            // control so no nearer project or prior write can mask refusal.
-            let baseline = snapshot(&fixture.root);
-            let permissions: std::collections::BTreeMap<_, _> = baseline
-                .iter()
-                .filter(|(_, entry)| matches!(entry, Entry::File(_)))
-                .map(|(path, _)| {
-                    (
-                        path.clone(),
-                        fs::metadata(fixture.root.join(path))
-                            .expect("baseline file metadata")
-                            .permissions(),
-                    )
-                })
-                .collect();
-            let restore = || {
-                let current = snapshot(&fixture.root);
-                for (relative, entry) in current.iter().rev() {
-                    if baseline.get(relative) == Some(entry)
-                        || matches!(
-                            (entry, baseline.get(relative)),
-                            (Entry::File(_), Some(Entry::File(_)))
-                        )
-                    {
-                        continue;
-                    }
-                    let path = fixture.root.join(relative);
-                    if matches!(entry, Entry::Directory) || (cfg!(windows) && path.is_dir()) {
-                        fs::remove_dir(&path).expect("remove control directory");
-                    } else {
-                        fs::remove_file(&path).expect("remove control file");
-                    }
-                }
-                for (relative, entry) in &baseline {
-                    let path = fixture.root.join(relative);
-                    match entry {
-                        Entry::Directory => {
-                            fs::create_dir_all(&path).expect("restore fixture directory");
-                        }
-                        Entry::File(bytes) => {
-                            if current.get(relative) != Some(entry) {
-                                fs::write(&path, bytes).expect("restore fixture file");
-                            }
-                            fs::set_permissions(&path, permissions[relative].clone())
-                                .expect("restore file permissions");
-                        }
-                        Entry::Link(_) => {
-                            assert_eq!(current.get(relative), Some(entry), "fixture link changed");
-                        }
-                    }
-                }
-                assert_eq!(snapshot(&fixture.root), baseline, "control state leaked");
-            };
-
             for control in ["own", "global", "independent"] {
                 if (cfg!(windows) && control == "global")
                     || (control == "independent" && directory != "bare")
                 {
                     continue;
                 }
+                let control_started = Instant::now();
                 let cwd = if control == "independent" {
                     &independent
                 } else {
@@ -623,10 +647,15 @@ fn each_parsed_writer_refuses_an_inherited_other_checkout_and_own_global_control
                     "must-fail {control} {verb}: {output:?}"
                 );
                 assert!(output.status.success(), "{control} {verb}: {output:?}");
+                report(verb, directory, control, control_started);
+                let restore_started = Instant::now();
                 restore();
+                report(verb, directory, "restore", restore_started);
             }
+            report(verb, directory, "complete", row_started);
         }
     }
+    report("table", "", "complete", table_started);
 }
 
 #[test]
