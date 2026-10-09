@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Inputs: block-worktree-refresh.sh and lib/first-line.sh.
 # The parsed CLI owns destination refusals. The catalog hook requires its
-# installed PATH command's fixed capability protocol before advisory output.
+# installed PATH command's fixed capability protocol before advisory output
+# or delegation of a baseline-recognized non-plain writer to the CLI.
 # Only one plain bare call can advise. Other plain writer-word matches refuse.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -110,6 +111,9 @@ quoted data stays silent|command|0|-|printf '%s' 'kendex refresh'
 heredoc data stays silent|command|0|-|cat \0074\0074'EOF'\nkendex refresh\nEOF
 quoted shell execution belongs to CLI|command|0|-|bash -c 'kendex refresh'"
 first_table "$DATA_ROWS"
+QUOTED_ROW='quoted writer belongs to guarded CLI|command|0|-|kendex "refresh"'
+first_table "$QUOTED_ROW"
+assert_eq "$(cat "$QUERY_LOG")" queried 'quoted writer asks trusted PATH capability'
 first_table 'plain refresh is an advisory|command|0|block-worktree-refresh: advisory=refresh|kendex refresh
 plain next command refuses|command|2|block-worktree-refresh: refused=refresh|git status && kendex refresh
 global refresh stays silent|command|0|-|kendex refresh --global
@@ -135,6 +139,7 @@ for mode in old failed empty unreadable wrong multiple stderr; do
   # Include every file, directory and link under the project and portable home.
   tar -cf "$TMP_ROOT/before.tar" -C "$TMP_ROOT" main linked home
   first_table "$mode capability refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex refresh"
+  first_table "$mode quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\""
   assert_eq "$(awk 'END {print NR}' "$ERR_FILE")" 1 "$mode refusal has one update line"
   [ ! -s "$OUT_FILE" ] && output=empty || output=present
   assert_eq "$output" empty "$mode refusal has no context"
@@ -142,12 +147,15 @@ for mode in old failed empty unreadable wrong multiple stderr; do
   if cmp -s "$TMP_ROOT/before.tar" "$TMP_ROOT/after.tar"; then unchanged=yes; else unchanged=no; fi
   assert_eq "$unchanged" yes "$mode refusal preserves complete fixture"
 done
-# Existing excluded input stays silent even when its executable is older.
+# Baseline writer words in data require the same capability on an older CLI.
 export CAPABILITY_MODE=old
-first_table "$DATA_ROWS"
+silent='|command|0|-|'
+update="|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|"
+first_table "${DATA_ROWS//$silent/$update}"
 first_table 'older global stays silent|command|0|-|kendex refresh --scope global
 older read stays silent|command|0|-|kendex verify
-older preview stays silent|command|0|-|kendex apply --plan'
+older preview stays silent|command|0|-|kendex apply --plan
+older quoted non-writer stays silent|command|0|-|printf "%s" "kendex verify"'
 export CAPABILITY_MODE=supported
 REFUSED_ROWS="PATH export compound refuses|command|2|block-worktree-refresh: refused=refresh|export PATH=$OLD_BIN; kendex refresh
 PATH assignment refuses|command|2|block-worktree-refresh: refused=refresh|PATH=$OLD_BIN kendex refresh
@@ -215,7 +223,7 @@ for shape in object string; do
 done
 
 # Rerun the same assertions against copies with a planted defect.
-for defect in title advisory capability_old capability_failed capability_unreadable single_call baseline_word unapproved_launch; do
+for defect in title advisory capability_old capability_failed capability_unreadable quoted_permissive quoted_word single_call baseline_word unapproved_launch; do
   mutant="$TMP_ROOT/$defect.sh"
   rm -f "$UNAPPROVED_MARKER"
   case "$defect" in
@@ -229,6 +237,14 @@ for defect in title advisory capability_old capability_failed capability_unreada
       awk '/^  require_guard$/ {print "  : require_guard"; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       export CAPABILITY_MODE=${defect#capability_}
       rows="$CAPABILITY_MODE capability refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex refresh" ;;
+    quoted_permissive)
+      awk '/^  \[ -z "\$FOUND" \] \|\| require_capability$/ {sub(/require_capability$/, ": require_capability"); n++} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      export CAPABILITY_MODE=old
+      rows="old quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\"" ;;
+    quoted_word)
+      awk '/^    word=\$\{word#\[/ {print "    : \"$word\""; n++; next} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
+      export CAPABILITY_MODE=old
+      rows="old quoted writer refuses|command|2|block-worktree-refresh: cli-update-required=$BIN/kendex; route=update|kendex \"refresh\"" ;;
     single_call)
       awk '/^  \[ "\$SINGLE_CALL" = yes \]/ {sub(/\[ "\$SINGLE_CALL" = yes \]/, ": \"$SINGLE_CALL\" = yes"); n++} {print} END {if(n!=1) exit 2}' "$HOOK" >"$mutant"
       rows=$REFUSED_ROWS ;;

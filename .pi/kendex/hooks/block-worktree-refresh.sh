@@ -3,9 +3,9 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Report an early advisory for one plain bare project-writing kendex call from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. Other plain writer-word matches retain baseline refusals, including compound commands, prefixes and executable paths. Global, read and preview commands pass silently. Quoted titles, messages, heredocs and other complex shell forms stay outside the plain scan. Missing capability, a failed query or an unreadable response refuses with the CLI update route.
-# summary: Requires the installed CLI's project-write protection before advising on one plain bare kendex call in a linked worktree. Other matched project writers refuse.
-# safety: Reads the hook payload and git checkout paths. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability for a single bare call; a supporting CLI answers before bootstrap writes. Never executes a proposed path. Other plain project-writer matches refuse without querying or advising. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, missing CLI capability and failed context output. A supported bare call retains unavailable advisories for a missing git or a failed git check.
+# description: Report an early advisory for one plain bare project-writing kendex call from a linked git worktree only after the installed executable on the hook's PATH confirms its parsed project-write guard. Other plain writer-word matches retain baseline refusals, including compound commands, prefixes and executable paths. Global, read and preview commands retain their plain classification. Outside the plain scan, baseline writer words require that same capability before passing silently, including quoted titles, messages and heredocs. Inputs with no baseline writer word pass silently. Missing capability, a failed query or an unreadable response refuses with the CLI update route.
+# summary: Requires installed CLI project-write protection before a plain bare worktree advisory or silent delegation of baseline-recognized quoted writer words. Other plain project writers refuse.
+# safety: Reads the hook payload and git checkout paths. Queries only the installed executable resolved by the hook's PATH with --worktree-project-write-capability for a single bare call or baseline writer words outside the plain scan; a supporting CLI answers before bootstrap writes. Never executes a proposed path. Other plain project-writer matches refuse without querying or advising. Refuses unreadable or invalid payloads, missing payload tools, invalid working-directory values, missing CLI capability and failed context output. A supported bare call retains unavailable advisories for a missing git or a failed git check.
 # timeout: 10
 # ---
 
@@ -42,6 +42,10 @@ $3"
 
 require_guard() {
   [ "$SINGLE_CALL" = yes ] || refuse refused "$WRITE" 'Run one bare kendex command from its project checkout.'
+  require_capability
+}
+
+require_capability() {
   local trusted
   trusted=$(type -P kendex) || refuse cli-update-required 'kendex; route=update'
   case "$trusted" in
@@ -76,10 +80,73 @@ COMMAND=$(printf '%s' "$INPUT" | jq -r '
   else "" end
   | if type == "string" then . else error end' 2>/dev/null) || refuse payload invalid-json
 
-# This advisory accepts only plain text. The CLI evaluates shell forms
-# after the shell has selected the command, arguments and directory.
+KENDEX_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]|$)'
+
+# The baseline reader only gates delegation to the parsed CLI. It does
+# not establish what a quoted word or another shell form will execute.
+writing_verb() { # SEGMENT -> FOUND, TAIL
+  local rest word raw glued group="" lead="" value="" first=1
+  FOUND=""
+  TAIL=""
+  [[ $1 =~ $KENDEX_RE ]] || return 0
+  rest=${1#*"${BASH_REMATCH[0]}"}
+  while :; do
+    rest=${rest#"${rest%%[![:space:]]*}"}
+    [ -n "$rest" ] || return 0
+    word=${rest%%[[:space:]]*}
+    rest=${rest#"$word"}
+    raw=$word
+    # A redirection glued to the word, as in `refresh>/dev/null`, ends the
+    # word Bash passes; it stays in the tail for the option reader.
+    glued=${word#"${word%%[<>]*}"}
+    word=${word%%[<>]*}
+    word=${word#[\"\']}
+    word=${word%[\"\']}
+    if [ -n "$first" ]; then
+      first=""
+      [ "$word" != help ] || return 0
+    fi
+    if [ -n "$value" ]; then
+      value=""
+      lead="$lead $raw"
+      continue
+    fi
+    case "$group:$word" in
+      :refresh | :apply | :add | :remove | :update-pi | :updates | :pin | :fork | :adopt | :drift-hook)
+        FOUND=$word
+        ;;
+      source:add | source:remove | source:enable | source:disable | marketplace:subscribe | marketplace:unsubscribe)
+        FOUND="$group $word"
+        ;;
+      source:-*)
+        lead="$lead $raw"
+        [ "$word" != --scope ] || value=1
+        continue
+        ;;
+      *:source | *:marketplace)
+        group=$word
+        lead=""
+        continue
+        ;;
+      *)
+        group=""
+        lead=""
+        continue
+        ;;
+    esac
+    TAIL="$lead $glued$rest"
+    return 0
+  done
+}
+
+# Shell forms stay silent only when the installed CLI guards the writes
+# the baseline reader finds. The CLI judges the actual parsed destination.
 PLAIN='^[[:alnum:]_./:@%=+,[:space:]&|;-]*$'
-[[ $COMMAND =~ $PLAIN ]] || exit 0
+if [[ ! $COMMAND =~ $PLAIN ]]; then
+  writing_verb "$COMMAND"
+  [ -z "$FOUND" ] || require_capability
+  exit 0
+fi
 SINGLE_CALL=no
 single='^[[:blank:]]*kendex([[:blank:]]+[[:alnum:]_./:@%=+,-]+)+[[:blank:]]*$'
 [[ $COMMAND =~ $single ]] && SINGLE_CALL=yes
@@ -89,7 +156,6 @@ COMMAND=${COMMAND//|/$'\n'}
 WRITE=""
 # Baseline writer-word matching has refusal-only reach beyond a bare call.
 # It does not establish what a prefix or another command will execute.
-KENDEX_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]|$)'
 while IFS= read -r segment; do
   [[ $segment =~ $KENDEX_RE ]] || continue
   tail=${segment#*"${BASH_REMATCH[0]}"}
